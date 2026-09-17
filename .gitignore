@@ -1,23 +1,24 @@
-### AL ###
-#Template for AL projects for Dynamics 365 Business Central
-#launch.json folder
-.vscode/
-#Cache folder
-.alcache/
-#Symbols folder
-.alpackages/
-#Snapshots folder
-.snapshots/
-#Testing Output folder
-.output/
-#Extension App-file
-*.app
-#Rapid Application Development File
-rad.json
-#Translation Base-file
-*.g.xlf
-#License-files
-*.bclicense
-*.flf
-#Test results file
-TestResults.xml
+# 操作系统
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 编辑器 / IDE
+# 注意：不要在这里写 .vscode/ ，会压掉 stfworkbench-vue/.gitignore 里
+# `!.vscode/extensions.json` 的放行规则（父目录被排除后子文件无法反排除）。
+# 编辑器配置交给各子项目的 .gitignore 自行处理。
+.idea/
+*.swp
+*.swo
+
+# 环境变量与密钥（切勿提交）
+.env
+.env.local
+.env.*.local
+
+# Claude Code 个人记忆（仅本地，不共享）
+CLAUDE.local.md
+
+# 日志
+*.log
+logs/
