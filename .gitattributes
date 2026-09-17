@@ -1,0 +1,21 @@
+# 换行符规则：仓库内一律存 LF，克隆到各人机器也一律是 LF。
+# 这样无论队友的本地 core.autocrlf 怎么配，行为都一致，不会出现整文件 diff。
+* text=auto eol=lf
+
+# Windows 批处理脚本必须保留 CRLF，否则 cmd 可能执行异常。
+# 这两条与 workbench-server/.gitattributes 中的同名规则一致（子目录规则优先，不冲突）。
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制资源不做换行符转换
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg text eol=lf
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.jar binary
+*.zip binary
