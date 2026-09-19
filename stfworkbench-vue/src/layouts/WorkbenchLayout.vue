@@ -25,6 +25,7 @@ const userStore = useUserStore()
 /** 已经做得出来的页面。 */
 const navItems = [
   { name: 'home', label: '首页', icon: HomeFilled, to: '/' },
+  { name: 'plan', label: '每日计划', icon: Calendar, to: '/plan' },
 ]
 
 /**
@@ -34,7 +35,6 @@ const navItems = [
  * 模块落地时，把它从下面这个数组移到 navItems 并加一条路由即可。
  */
 const upcomingModules = [
-  { label: '每日计划', icon: Calendar },
   { label: '生日纪念日', icon: Present },
   { label: '课程表', icon: Notebook },
   { label: '备忘录', icon: Memo },

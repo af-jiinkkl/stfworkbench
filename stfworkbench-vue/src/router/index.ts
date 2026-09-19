@@ -17,6 +17,11 @@ const router = createRouter({
           // 懒加载：各页面拆成独立 chunk，首屏不必把它们全下下来
           component: () => import('@/views/HomeView.vue'),
         },
+        {
+          path: 'plan',
+          name: 'plan',
+          component: () => import('@/views/PlanView.vue'),
+        },
         // 后续模块（生日 / 课程表 / 备忘 / 新闻 / 消费）加到这一层
       ],
     },

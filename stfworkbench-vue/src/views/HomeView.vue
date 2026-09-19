@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useUserStore } from '@/store/user'
 
 /**
@@ -19,12 +20,22 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
+interface HomeModule {
+  label: string
+  desc: string
+  /** 已实现的模块给出路由地址，卡片变成可点的；没有这个字段的就是还没做 */
+  to?: string
+}
+
 /**
  * 模块总览。与侧边栏那份是同一批，但这里多一句说明 ——
  * 侧边栏只需要名字，首页要讲清每个模块打算做什么。
+ *
+ * 类型显式写成 HomeModule[]，不然 TS 会推出「有的带 to、有的不带」的联合类型，
+ * 访问 mod.to 时会对没写 to 的那几项报错。
  */
-const modules = [
-  { label: '每日计划', desc: '今天的待办与完成情况' },
+const modules: HomeModule[] = [
+  { label: '每日计划', desc: '今天的待办与完成情况', to: '/plan' },
   { label: '生日纪念日', desc: '重要日子与倒数提醒' },
   { label: '课程表', desc: '每周课程安排' },
   { label: '备忘录', desc: '随手记下的碎片' },
@@ -45,21 +56,33 @@ const modules = [
     </header>
 
     <section class="grid">
-      <article
+      <!-- 做好的模块渲染成 router-link（可点、可键盘聚焦、可右键新标签打开），
+           没做好的还是 article。用 :is 切换而不是把两块内容各写一遍 -->
+      <component
+        :is="mod.to ? RouterLink : 'article'"
         v-for="mod in modules"
         :key="mod.label"
+        :to="mod.to"
         class="wb-card module"
+        :class="{ 'is-link': mod.to }"
       >
         <div class="module-head">
           <h2 class="module-title">
             {{ mod.label }}
           </h2>
-          <span class="module-tag">待开发</span>
+          <span
+            v-if="!mod.to"
+            class="module-tag"
+          >待开发</span>
+          <span
+            v-else
+            class="module-go"
+          >进入 →</span>
         </div>
         <p class="module-desc">
           {{ mod.desc }}
         </p>
-      </article>
+      </component>
     </section>
   </div>
 </template>
@@ -96,6 +119,23 @@ const modules = [
 .module {
   padding: 16px;
   transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+/* 已实现的模块：悬停时描边加深，给出"这个能点"的反馈。
+   不做位移和投影 —— 那套在这个风格里太吵 */
+.module.is-link:hover {
+  background-color: var(--wb-surface-hover);
+  border-color: var(--wb-border-strong);
+}
+
+.module-go {
+  flex-shrink: 0;
+  font-size: var(--wb-text-xs);
+  color: var(--wb-text-muted);
+}
+
+.module.is-link:hover .module-go {
+  color: var(--wb-text-secondary);
 }
 
 .module-head {
