@@ -69,7 +69,7 @@ pnpm preview      # 预览构建产物
 
 - `main` 始终保持可运行，**不直接在上面开发**
 - 每个改动开独立分支，完成后合并回 `main`
-- 分支命名沿用「命名约定」：`feature/xxx`、`fix/xxx`、`refactor/xxx`、`hotfix/xxx`
+- 分支命名沿用「命名约定」：`feature/xxx`、`fix/xxx`、`refactor/xxx`、`hotfix/xxx`、`docs/xxx`
 - 分支短命：一个分支只做一件事，合并后立即删除
 
 ### 日常流程
@@ -169,6 +169,7 @@ org.example.workbenchserver
 - `fix/xxx` bug 修复
 - `refactor/xxx` 重构
 - `hotfix/xxx` 线上紧急修复
+- `docs/xxx` 纯文档改动（需求、设计、说明文档）
 
 ### 后端分层规范（SpringBoot + MyBatis/MyBatis-Plus）
 
