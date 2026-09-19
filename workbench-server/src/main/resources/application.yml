@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: workbench-server
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 连接信息一律走环境变量，不硬编码 —— 见 docs/需求说明.md §8「部署推迟的前提约束」
+    # characterEncoding 要填 **Java 字符集名**（UTF-8），不是 MySQL 的字符集名（utf8mb4）。
+    # 填 utf8mb4 会在获取连接时抛 UnsupportedEncodingException，且错误信息只说
+    # "Failed to obtain JDBC Connection"，不容易一眼看出是这里的问题。
+    # 数据库/表的 utf8mb4 在 schema.sql 里设置，Connector/J 会自动做映射。
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:stfworkbench}?characterEncoding=UTF-8&connectionTimeZone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+
+  jackson:
+    # 统一时区。见 docs/需求说明.md §4「某一天」的时区问题
+    time-zone: Asia/Shanghai
+    # 注意：这里刻意不配 default-property-inclusion=non_null。
+    # 接口清单里 completedTime 为 null 时是要显式返回 null 的，
+    # 配了 non_null 会把字段整个抹掉，前端拿到 undefined 而不是 null。
+
+server:
+  port: ${SERVER_PORT:8080}
+
+mybatis-plus:
+  configuration:
+    # 数据库下划线字段 → Java 小驼峰属性（user_name → userName）
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      # 逻辑删除。见 docs/数据模型.md §4.2：deleted 为 BIGINT
+      # 0 表示未删除，非 0 存的是删除时刻的时间戳。
+      # 用时间戳而非 1，是为了让「唯一索引 + 逻辑删除」能共存 ——
+      # 若 deleted 只有 0/1 两个值，删掉再重建同名记录会撞唯一键。
+      logic-delete-field: deleted
+      logic-not-delete-value: 0
+      logic-delete-value: UNIX_TIMESTAMP()
+
+workbench:
+  jwt:
+    # 不设默认值：密钥绝不入库。未设置时应用启动即失败，
+    # 而不是悄悄用一个写死在代码里的弱密钥跑起来。
+    secret: ${JWT_SECRET:}
+    # token 有效期 7 天
+    expire-hours: ${JWT_EXPIRE_HOURS:168}
+  registration:
+    # 注册开关，见 docs/接口清单.md §12 已确认事项 2
+    # 关掉后 POST /api/auth/register 返回 403
+    enabled: ${REGISTRATION_ENABLED:true}
+
+logging:
+  level:
+    org.example.workbenchserver: debug
