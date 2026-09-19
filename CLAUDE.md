@@ -9,16 +9,69 @@
 
 ## 当前状态
 
-两个子项目**都还是初始化脚手架**，尚无业务代码：
+**两条链路已打通：注册 → 登录 → 首页，以及每日计划（增删改查 + 勾选 + 回顾）**
+（分支 `feature/auth-login`，尚未合并到 `main`）。
 
-- 前端只有 `src/App.vue`（Vue 默认欢迎页）和 `src/main.ts`
-- 后端只有 `WorkbenchServerApplication.java` 和空的 `application.properties`
-- 已在根目录 `git init`（`main` 分支），两个子项目纳入**同一个仓库**，详见 [Git 操作](#git-操作)
+后端：
 
-### 两个已知的"还没打通"
+- Web 层用 `spring-boot-starter-webmvc` —— Spring Boot 4 里 `spring-boot-starter-web` 已标记废弃
+- 持久层 MyBatis-Plus 3.5.17。starter 名是 `mybatis-plus-spring-boot4-starter`，
+  且**必须**另加 `mybatis-plus-jsqlparser`，否则分页与数据隔离插件运行时会找不到类
+- **Jackson 用的是第 3 代**（包名 `tools.jackson`，定制器是 `JsonMapperBuilderCustomizer`）。
+  唯一的例外是注解包，仍是 `com.fasterxml.jackson.annotation`。注意 `jjwt-jackson`
+  会拖进一个 Jackson 2，那是 JWT 内部用的，别混用
+- 认证为 JWT + BCrypt；数据隔离靠 `MybatisPlusConfig` 的租户插件自动注入 `user_id` 条件，
+  业务代码里**不要**手写 `user_id` 过滤。拦截器顺序不能颠倒：隔离必须在分页之前
+- **`@MapperScan` 必须留在 `MybatisPlusConfig` 上，不要挪到启动类。**
+  切片测试（`@JsonTest` / `@WebMvcTest`）沿包向上会找到启动类当配置类，而切片不装配
+  MyBatis；`@MapperScan` 一旦在启动类，切片就会因找不到 `SqlSessionFactory` 而启动失败，
+  报错却是一句和被测内容无关的 "Property 'sqlSessionFactory' or 'sqlSessionTemplate' are required"。
+  普通 `@Configuration` 会被切片排除，所以放在 `MybatisPlusConfig` 里是安全的
+- 建表脚本 `workbench-server/src/main/resources/db/schema.sql`，**不会自动执行**，需手动运行
+- **带 `user_id` 的实体一律不要写 `userId` 属性**（见 `PlanTask`）。租户插件只在
+  INSERT 时补**列清单里没有**的列；实体一旦带 `userId`，MyBatis-Plus 会把它写进列清单，
+  拦截器见状就不再补 —— 于是"谁把 `userId` 赋错值就写进谁名下"，成了绕过隔离的越权通道
+- **清空字段必须用 `LambdaUpdateWrapper` 显式 `.set(..., null)`**，不能用 `updateById`。
+  MyBatis-Plus 默认字段更新策略是 `NOT_NULL`，null 字段会被**跳过**而非写进 SQL ——
+  每日计划取消勾选时 `completed_time` 正是靠这一点才能清回 null
+- 未查到（含"存在但属于别人"）统一返回 **404 而非 403**：403 等于确认该 id 存在，
+  而主键连续自增，这就成了存在性探测点
 
-1. **后端目前起不了 Web 服务** —— `pom.xml` 只依赖 `spring-boot-starter`，没有 `spring-boot-starter-web`。在加这个依赖之前，写不了 `@RestController`，也没有内嵌 Tomcat。
-2. **前后端尚未连接** —— 前端没有 HTTP 客户端封装（无 axios），`vite.config.ts` 里也没有 `server.proxy` 转发规则。两边目前完全独立。
+测试（`./mvnw test`，需先设 `DB_PASSWORD` 与 `JWT_SECRET`，因为要连真实 MySQL）：
+
+- `DataIsolationTest` —— **数据隔离的回归测试**，安全底线。用一张临时探针表
+  （`wb_isolation_probe`，由测试自己建）验证：不写任何 `user_id` 条件时，
+  增删查改是否仍被限定在当前用户内，包括"拿别人的主键查"这种越权场景。
+  新增带 `user_id` 的表后，应照着它补用例
+- `PlanTaskIsolationTest` —— 同一件事，但验的是**真实实体与 Mapper 接上拦截器之后**
+  是否也有效（探针表证明机制可用，它证明本模块确实用上了）。数据用原生 `JdbcTemplate`
+  带显式 `user_id` 种入，绕开 MyBatis —— 若改用 Mapper 插，拦截器一失效就会在**插入**
+  阶段抛 NOT NULL，测试红了却红在错误位置，读改写删的越权断言根本没跑过
+- `JacksonConfigTest` —— 无数据库，验证日期格式与 null 字段不被吞掉
+
+前端：
+
+- Element Plus / Pinia / vue-router / Axios 均已安装
+- `src/utils/request.ts` 统一封装（注入 token、处理 401 跳登录）
+- `vite.config.ts` 已配 `server.proxy`，把 `/api` 转发到后端 8080
+- **日期一律走 `src/utils/date.ts`，不要用 `new Date()` 那一套**。两处坑：
+  `toISOString()` 取的是 UTC，在东八区上午 8 点前会得到前一天（白天看不出来，早上才炸）；
+  `new Date('2026-09-19')` 按 UTC 午夜解析，同样会偏。另外 `el-date-picker` 的
+  `value-format` 用的是 dayjs 记号（`YYYY-MM-DD`），和后端 Java 的 `yyyy-MM-dd` 长得像但不是一回事
+- **`@Valid` 只管请求体，不管 URL 查询参数的类型转换**。`LocalDate` 查询参数必须
+  自己带 `@DateTimeFormat(iso = ISO.DATE)`，`JacksonConfig` 覆盖不到 MVC 这一层
+- 触屏/悬停之外的交互：`PlanView.vue` 里行内编辑用双击或铅笔图标进入，Enter 保存、
+  Esc 取消。取消靠 `editingId` 置空挡掉随后那次 blur，否则"取消"会把改动存进去
+
+### 启动前必须设置的环境变量
+
+| 变量 | 说明 |
+|---|---|
+| `JWT_SECRET` | 至少 32 字符。**没有默认值**，不设置则后端启动即失败（见 `JwtUtil`） |
+| `DB_USERNAME` / `DB_PASSWORD` | MySQL 账号密码，用户名默认 `root` |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` | 默认 `localhost` / `3306` / `stfworkbench` |
+
+后端启动失败时先看是不是漏了 `JWT_SECRET`。前端开发时无需设置 —— 请求经 Vite 代理转发。
 
 ## 常用命令
 
@@ -119,9 +172,8 @@ git branch -d feature/user-list
 
 ## 开发规范
 
-> ⚠️ 本节是**目标状态**，不是现状。其中提到的 MySQL / MyBatis-Plus / Pinia / Axios / Element Plus
-> **目前都还没装**（后端 pom 只有 `spring-boot-starter`，前端 package.json 只有 `vue`）。
-> 规范先定下来，写代码时按此执行；但**不要假设这些依赖已经存在**。
+> 本节所列依赖**均已安装**（2026-09-19）。但本节仍是**规范**：写代码时按此执行。
+> 若发现代码与本节冲突，以本节为准并回头修正代码。
 
 ### 命名约定
 
@@ -245,8 +297,8 @@ pageSize: 10
 
 ### 前端规范 Vue3 + TS + Vite
 
-1. **技术栈**：Vue3 + `<script setup>` + TypeScript + Pinia + Axios + Element Plus / Ant Design Vue
-   > 除 Vue3 + TS + Vite 外，Pinia / Axios / 组件库**均未安装**；组件库二选一，定了要同步到本文件。
+1. **技术栈**：Vue3 + `<script setup>` + TypeScript + Pinia + Axios + **Element Plus**
+   > 组件库已定为 **Element Plus**（2026-09-19 确认）。Pinia / Axios / vue-router / Element Plus 均已安装。
 2. **目录结构**
 
 ```
