@@ -1,6 +1,8 @@
 package org.example.workbenchserver.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -36,8 +38,14 @@ public class User {
 	/** QQ 登录标识，当前版本未启用，仅预留 */
 	private String qqOpenid;
 
+	// 两个时间戳归数据库管，Java 一侧不许写。完整理由见 Expense 的同名字段。
+	// 本表目前只有 INSERT（AuthServiceImpl），加这两行不影响任何现有行为 ——
+	// 加是因为它迟早会有"改昵称"这类写路径，而那时漏注解的出错方式
+	// 和其余四个实体一模一样：不报错，只是时间不动
+	@TableField(updateStrategy = FieldStrategy.NEVER)
 	private LocalDateTime createTime;
 
+	@TableField(updateStrategy = FieldStrategy.NEVER)
 	private LocalDateTime updateTime;
 
 	/**

@@ -1,6 +1,8 @@
 package org.example.workbenchserver.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -29,8 +31,14 @@ public class Memo {
 	/** 正文。TEXT 列，可长可空 */
 	private String content;
 
+	// 两个时间戳归数据库管，Java 一侧不许写。完整理由见 Expense 的同名字段，
+	// 一句话版：ON UPDATE CURRENT_TIMESTAMP 只在那一列**没被显式赋值**时才触发，
+	// 而 updateById(实体) 默认会把实体上每个非 null 字段都塞进 SET。
+	// 备忘录列表上显示的就是 updateTime，漏了这个注解就会"改完时间不动的"
+	@TableField(updateStrategy = FieldStrategy.NEVER)
 	private LocalDateTime createTime;
 
+	@TableField(updateStrategy = FieldStrategy.NEVER)
 	private LocalDateTime updateTime;
 
 	/** 逻辑删除：0 未删除，非 0 为删除时间戳 */
