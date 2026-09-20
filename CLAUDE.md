@@ -16,8 +16,15 @@
 每日新闻（第三方抓取 + 定时任务 + 只读列表 + 首页卡片）。
 首页由 `GET /api/dashboard` 一次聚合今日计划 + 今日课程 + 临近生日 + 备忘条数 + 今日消费 + 最新新闻**。
 
-合并进度：`main` 到每日消费为止（`d509624`），课程表在 `feature/course` 上，
-**新闻模块尚未提交**（按 `db/schema.sql` 顶部的表 → 分支对照表，它属于 `feature/news`）。
+**八个模块之外，前端已做窄屏（≤768px）适配**：侧边栏缩成 56px 图标栏、
+各页窄屏规则、触屏下操作按钮一律显形。**只动了前端**，后端一行没改。
+桌面端（>768px）外观保持原样。
+
+合并进度：三支都**尚未合并回 `main`**（`main` 停在每日消费，`d509624`）。
+课程表在 `feature/course` 上，新闻模块接在它后面（`feature/news`，
+按 `db/schema.sql` 顶部的表 → 分支对照表，它属于这一支），
+窄屏适配再接在新闻之后（`feature/mobile` —— 窄屏规则要改到新闻页和课程表页，
+排不到前面去）。**分支是串起来的，合并得按这个顺序来。**
 
 后端：
 
@@ -361,6 +368,72 @@
 - 没有 `url` 的那条渲染成 `<span class="news-title is-plain">`（浅一档、无下划线），
   **不是空 `href` 的 `<a>`** —— 后者点下去会跳到当前页，看着像点了没反应。
   有 `url` 的才是链接，且一律 `target="_blank" rel="noopener noreferrer"`
+
+窄屏（≤768px）适配：
+
+- **断点全站只有 `max-width: 768px` 这一个**（另有一处既有的
+  `ExpenseView` 图表单列 `max-width: 900px`）。769–1024px 的内容区还有 500px 以上，
+  各页自己的横向滚动够用。断点一多，每加一个页面都要重新想"它落在哪一档"
+- 窄屏侧边栏**缩成 56px 图标栏，不是抽屉**，所以没有开关状态、遮罩、Esc、锁滚动这一套。
+  桌面端宽度的唯一来源仍是 `--wb-sidebar-width`（268px），窄屏是在
+  `WorkbenchLayout` 的媒体查询里覆写 `.sidebar`，**没有动那个 token**
+- 图标栏里文字被 `display: none` 隐藏 —— 这**同时把它从无障碍树里摘掉**，
+  所以导航项和退出按钮都必须补 `aria-label`，否则读屏软件读到的是 7 个没有名字的链接
+- 退出按钮的图标 `.logout-icon` 默认是 `display: none`，只在窄屏显形。
+  这是为了守住"桌面端零变化"：不加这一条，桌面端会多出一个原本没有的图标
+- **`@media (hover: none)` 判的是输入方式，不是屏幕宽度** ——
+  1440px 宽的触摸屏笔记本同样没有悬停，而手机外接鼠标是有的。
+  四处"平时 `opacity: 0`、悬停才显形"的操作按钮（`PlanView` 的 `.task-actions`、
+  `AnniversaryView` 的 `.item-actions`、`MemoView` 的 `.memo-actions`、
+  `ExpenseView` 的 `.row-actions`）都在这个查询里一律显形。
+  其中消费那一处最急：表格行不是可聚焦元素，`:focus-within` 那半条也指望不上，
+  **触屏下这个"删除"按钮原本既看不见、又找不到任何办法让它显形**
+- 页面外壳 `.wb-page` / `.wb-title` / `.wb-subtitle` / `.wb-page-header`
+  已提到 `styles/index.css`（原先在 7 个视图里各抄一份，光改 padding 就要改 7 个文件）。
+  **类名带 `wb-` 前缀不是洁癖**：Vue 的 `scoped` 会把视图里的 `.page` 编译成
+  `.page[data-v-xxx]`（权重 0,2,0），全局的 `.page`（0,1,0）**压不过它**，
+  只能上 `!important`。**首页的 `.page-header` 是唯一没并进去的一个** ——
+  它是块级、没有左右分栏，套上 `space-between` 的 flex 行会让标题块收缩到内容宽，
+  桌面端看得见
+- **弹窗宽度用一条全局 `.el-dialog { max-width: calc(100vw - 32px) }` 兜底**，
+  不去逐个改那 5 处写死的 `width` 属性（440 / 420 / 480 / 560px，落在 4 个页面）。
+  两层理由：改 5 处是 5 次机会漏一个；
+  而 el-dialog **会 teleport 到 body**，scoped 样式本来就不该管它
+- **换行看的是 flex base size，不是收缩后的宽度** —— 这是窄屏适配里最容易白干的一处。
+  `white-space: nowrap` 的元素，base size 就是那串很长的不换行文本，
+  一个人就超过整行，于是它后面的兄弟必然被挤到下一行，**怎么调 `order` 都没用**。
+  实测踩过两次：`UpcomingAnniversaryList` 的姓名把"就是今天"挤到了第三行，
+  `AnniversaryView` 的姓名把"21 日"独自留在第一行、整条记录摊成五行。
+  修法都是把它的 `flex-basis` 归零（`flex: 1 1 0`），让它不参与"放不放得下"的判断
+- 反过来，**只想让某项换行、其余留在第一行时**，不要去设 `flex-basis: 100%`
+  ——那会让**同类的每一项各占一行**。首页今日课程那一行有两个 `.course-meta`
+  （地点、老师），设了就会变成"节次 / 课名 / 地点 / 老师"四行
+- 首页今日课程那一行另有一步：仅"允许换行"不够，地点和老师加起来往往不到 130px，
+  它们会心安理得留在第一行，被挤扁的还是课名（实测只剩 91px）。
+  给课名一个 `min-width: 50%` 逼 meta 让位（改后 137px）
+- 课程表窄屏靠 `.grid-scroll` 既有的 `overflow-x` 横滑，**时段列用
+  `position: sticky; left: 0` 钉住**，否则翻到周三就不知道是哪一节。
+  sticky 是相对最近的滚动祖先定位的，`left: 0` 就是内容区左边缘，
+  **不必去算侧边栏那 56px**；底色必须有（`.corner, .band, .day-head, .slot, .block`
+  那条统一给的），不然滚过去的课块会从这一列底下透出来
+- 消费的明细表**不压列宽**，交给 el-table 自身的横向滚动（5 列最小 610px）
+- 窄屏验证脚本在仓库外 `C:\Users\43146\wb-browser-tools\mobile-check.mjs`
+  （`node mobile-check.mjs` = 390×844 触摸设备，`--desktop` = 1440×900）。
+  **两条验收指标都反直觉，别照抄常见写法**：
+  - `document.documentElement.scrollWidth <= innerWidth` 在本仓库**恒真** ——
+    `WorkbenchLayout` 的 `.content` 只写了 `overflow-y: auto`，按 CSS 规则
+    `overflow-x` 会因此**计算成 `auto`**，超宽内容是在内容区**内部**滚，
+    页面主体压根不会横向滚动。改为逐元素量：凡 `overflow-x: visible` 且
+    `scrollWidth > clientWidth` 的才算溢出（`overflow-x` 不是 visible 的**故意跳过**
+    —— 带 ellipsis 的标题正是靠裁剪，算进来会满屏假阳性）
+  - `page.screenshot({ fullPage: true })` **只拍到一屏** —— 同一个原因，
+    body 不滚、滚的是 `.content`，Playwright 以为整页就一屏高。
+    消费的明细表、备忘录的翻页器都在这条线以下，所以每个页面要拍两张（首屏 + 滚到底）
+  - 脚本分 A–F 六段，其中 **F 段专门证明"窄屏规则真的生效了"**：
+    A 段的"无溢出"证明不了这一点 —— 一条 `flex-basis: 100%` 写错位置，
+    结果同样是不溢出，只是该换行的没换行。F 段逐条量"那个元素是不是真的跑到第二行去了"
+  - 桌面端要跑 `--desktop` 确认没有回退，但**B 段（触屏按钮）在桌面端会跳过** ——
+    那里有 hover，`opacity: 0` 是正确行为，跑下去只会得到一条假红
 
 ### 启动前必须设置的环境变量
 
