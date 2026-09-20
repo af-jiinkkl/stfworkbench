@@ -2,10 +2,12 @@ package org.example.workbenchserver.service.impl;
 
 import org.example.workbenchserver.common.util.WorkbenchTime;
 import org.example.workbenchserver.service.AnniversaryService;
+import org.example.workbenchserver.service.CourseService;
 import org.example.workbenchserver.service.DashboardService;
 import org.example.workbenchserver.service.ExpenseService;
 import org.example.workbenchserver.service.MemoService;
 import org.example.workbenchserver.service.PlanTaskService;
+import org.example.workbenchserver.vo.CourseVO;
 import org.example.workbenchserver.vo.DashboardVO;
 import org.example.workbenchserver.vo.PlanTaskVO;
 import org.example.workbenchserver.vo.TodayPlanVO;
@@ -28,6 +30,8 @@ import java.util.List;
  *   <li>即将到来的生日走 {@link AnniversaryService#upcoming()}，与纪念日页、
  *       以及原来的 {@code GET /api/anniversary/upcoming} 是同一段代码</li>
  *   <li>今日消费走 {@link ExpenseService#sumOf}，与消费页的饼图合计是同一条路径</li>
+ *   <li>今日课程走 {@link CourseService#listOnDate}，与课程表页翻到本周看到的是同一段代码 ——
+ *       "今天算第几周、这门课这周上不上"只在那边判一次</li>
  * </ul>
  *
  * <p>若在这里自己拼一个 {@code LambdaQueryWrapper} 查表，就会有第二份
@@ -44,15 +48,18 @@ public class DashboardServiceImpl implements DashboardService {
 	private final AnniversaryService anniversaryService;
 	private final MemoService memoService;
 	private final ExpenseService expenseService;
+	private final CourseService courseService;
 
 	public DashboardServiceImpl(PlanTaskService planTaskService,
 			AnniversaryService anniversaryService,
 			MemoService memoService,
-			ExpenseService expenseService) {
+			ExpenseService expenseService,
+			CourseService courseService) {
 		this.planTaskService = planTaskService;
 		this.anniversaryService = anniversaryService;
 		this.memoService = memoService;
 		this.expenseService = expenseService;
+		this.courseService = courseService;
 	}
 
 	@Override
@@ -74,7 +81,12 @@ public class DashboardServiceImpl implements DashboardService {
 		LocalDate today = WorkbenchTime.today();
 		BigDecimal todayExpense = expenseService.sumOf(today, today);
 
-		return new DashboardVO(todayPlan, upcoming, memoService.count(), todayExpense);
+		// 今日课程把 today 传下去，而不是让 CourseService 自己再取一次今天 ——
+		// 本方法里"今天"只取一次，免得这个字段和其他字段跨了一次午夜
+		List<CourseVO> todayCourses = courseService.listOnDate(today);
+
+		return new DashboardVO(todayPlan, todayCourses, upcoming,
+				memoService.count(), todayExpense);
 	}
 
 }
