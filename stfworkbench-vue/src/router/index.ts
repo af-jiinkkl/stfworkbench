@@ -42,7 +42,11 @@ const router = createRouter({
           name: 'course',
           component: () => import('@/views/CourseView.vue'),
         },
-        // 后续模块（每日新闻）加到这一层
+        {
+          path: 'news',
+          name: 'news',
+          component: () => import('@/views/NewsView.vue'),
+        },
       ],
     },
     {

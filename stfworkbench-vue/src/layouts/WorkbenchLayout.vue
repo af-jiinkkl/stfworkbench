@@ -15,14 +15,16 @@ import { useUserStore } from '@/store/user'
 /**
  * 工作台外壳：左侧固定导航 + 右侧内容区。
  *
- * 做成 layout 而不是写在 HomeView 里，是因为后面 6 个模块都要共用这套导航 ——
+ * 做成 layout 而不是写在 HomeView 里，是因为其余 7 个页面都要共用这套导航 ——
  * 否则每加一个模块就得复制一遍侧边栏。
  */
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-/** 已经做得出来的页面。 */
+/**
+ * 已经做得出来的页面。顺序与首页模块总览一致，两边看着才是同一套。
+ */
 const navItems = [
   { name: 'home', label: '首页', icon: HomeFilled, to: '/' },
   { name: 'plan', label: '每日计划', icon: Calendar, to: '/plan' },
@@ -30,16 +32,7 @@ const navItems = [
   { name: 'memo', label: '备忘录', icon: Memo, to: '/memo' },
   { name: 'expense', label: '每日消费', icon: Wallet, to: '/expense' },
   { name: 'course', label: '课程表', icon: Notebook, to: '/course' },
-]
-
-/**
- * 规划中、尚未实现的模块。
- *
- * 这里刻意**不**做成可点的空路由：点进去只有一个空白页，比灰着更让人困惑。
- * 模块落地时，把它从下面这个数组移到 navItems 并加一条路由即可。
- */
-const upcomingModules = [
-  { label: '每日新闻', icon: Reading },
+  { name: 'news', label: '每日新闻', icon: Reading, to: '/news' },
 ]
 
 const nickname = computed(() => userStore.userInfo?.nickname ?? '')
@@ -99,21 +92,6 @@ async function handleLogout(): Promise<void> {
           </el-icon>
           <span>{{ item.label }}</span>
         </router-link>
-
-        <p class="nav-caption">
-          即将上线
-        </p>
-
-        <div
-          v-for="mod in upcomingModules"
-          :key="mod.label"
-          class="nav-item is-disabled"
-        >
-          <el-icon class="nav-icon">
-            <component :is="mod.icon" />
-          </el-icon>
-          <span>{{ mod.label }}</span>
-        </div>
       </nav>
 
       <div class="sidebar-footer">
@@ -218,26 +196,10 @@ a.nav-item:hover {
   color: var(--wb-text);
 }
 
-/* 未实现的模块：只读地摆在那里，不可点也不响应悬停。
-   文字和图标各比对应的可用项轻一档，整体构成一个"整块降一档"的观感 ——
-   之前两处都用了最浅的色，淡到快读不出字了。 */
-.nav-item.is-disabled {
-  color: var(--wb-text-muted);
-  cursor: default;
-}
-
-.nav-item.is-disabled .nav-icon {
-  color: var(--wb-text-faint);
-}
-
-.nav-caption {
-  padding: 0 12px;
-  margin: 24px 0 8px;
-  font-size: var(--wb-text-sm);
-  font-weight: 500;
-  color: var(--wb-text-muted);
-  letter-spacing: 0.04em;
-}
+/* 规划中的模块曾经在这里，样式是 .nav-item.is-disabled（不可点、不响应悬停）。
+   八个模块全部落地后那段连同"即将上线"标题一起删掉了 —— 空标题下面没有条目
+   比灰着更让人困惑。将来再加未实现的模块时，样式照上面那套写：
+   文字用 --wb-text-muted、图标用 --wb-text-faint，整体比可用项降一档。 */
 
 /* ---------- 侧边栏底部 ---------- */
 .sidebar-footer {

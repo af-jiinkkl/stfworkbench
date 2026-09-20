@@ -7,6 +7,7 @@ import UpcomingAnniversaryList from '@/components/UpcomingAnniversaryList.vue'
 import { useUserStore } from '@/store/user'
 import { money } from '@/utils/money'
 import { sectionText } from '@/types/course'
+import { timeText } from '@/types/news'
 import type { Dashboard } from '@/types/dashboard'
 
 /**
@@ -42,6 +43,15 @@ const upcoming = computed(() => dashboard.value?.upcomingAnniversaries ?? [])
  * 空数组是**正常状态**（今天没课，或者还没建学期），不是错误。
  */
 const todayCourses = computed(() => dashboard.value?.todayCourses ?? [])
+
+/**
+ * 今日新闻的前几条。**后端已经截过了**，这里不再 `slice` —— 截两遍的话，
+ * 改卡片条数就得改两个地方，而漏改的那一处不报错，只是卡片条数悄悄变了。
+ *
+ * 空数组是正常状态（没配 appkey、抓取还没跑、或那天确实没抓到），
+ * 此时整块不出现，和"即将到来"同一套取舍。
+ */
+const latestNews = computed(() => dashboard.value?.latestNews ?? [])
 
 const todayPlan = computed(() => dashboard.value?.todayPlan ?? null)
 
@@ -151,7 +161,15 @@ const modules = computed<HomeModule[]>(() => {
         ? (todayCourses.value.length ? `今日 ${todayCourses.value.length} 节` : '今天没有课')
         : undefined,
     },
-    { label: '每日新闻', desc: '每天值得一读的几条' },
+    {
+      label: '每日新闻',
+      desc: '每天值得一读的几条',
+      to: '/news',
+      // 这里**不给条数**：聚合只带回来前几条，写"今日 5 条"会与
+      // 新闻页上那个真实条数对不上 —— 而首页的数字没人会去核。
+      // 与生日那套同一取舍：拿不准就不给数字，空着比给个错的强
+      meta: latestNews.value.length ? '今日已更新' : undefined,
+    },
   ]
 })
 </script>
@@ -303,6 +321,57 @@ const modules = computed<HomeModule[]>(() => {
         </RouterLink>
       </div>
       <UpcomingAnniversaryList :items="upcoming" />
+    </section>
+
+    <!-- ========== 每日新闻 ========== -->
+    <!-- 一条都没有时整块不出现，和"即将到来"同一套取舍：
+         一块"暂无新闻"的空白卡片除了占地方没有别的用处 -->
+    <section
+      v-if="latestNews.length"
+      class="wb-card panel"
+    >
+      <div class="panel-head">
+        <h2 class="panel-title">
+          每日新闻
+        </h2>
+        <!-- 只说"全部"，不说"共 N 条"：聚合只带回来前几条，
+             拿它当总数会与新闻页上那个真实条数对不上 -->
+        <RouterLink
+          to="/news"
+          class="panel-more"
+        >
+          全部 →
+        </RouterLink>
+      </div>
+
+      <!-- 和今日任务、今日课程一样是**只读**的：点标题去原文，
+           要浏览全部去新闻页。这里不放任何编辑入口 -->
+      <ul class="news-list">
+        <li
+          v-for="item in latestNews"
+          :key="item.id"
+          class="news"
+        >
+          <!-- 第三方偶尔不给 url，那种记录留着但不可点。
+               不做成空 href 的链接 —— 空 href 指向当前页，点一下像刷新 -->
+          <a
+            v-if="item.url"
+            class="news-title"
+            :href="item.url"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ item.title }}</a>
+          <span
+            v-else
+            class="news-title is-plain"
+          >{{ item.title }}</span>
+
+          <span class="news-meta">
+            <span v-if="item.source">{{ item.source }}</span>
+            <span v-if="item.publishTime">{{ timeText(item.publishTime) }}</span>
+          </span>
+        </li>
+      </ul>
     </section>
 
     <section class="grid">
@@ -561,6 +630,56 @@ const modules = computed<HomeModule[]>(() => {
 
 .soon-more:hover {
   color: var(--wb-text-secondary);
+}
+
+/* ---------- 每日新闻 ---------- */
+.news-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.news {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.news:last-child {
+  border-bottom: none;
+}
+
+/* 标题占满剩余宽度、超长省略：它是一行里唯一需要读的东西 */
+.news-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--wb-text-sm);
+  color: var(--wb-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.news-title:hover {
+  color: var(--wb-text-secondary);
+  text-decoration: underline;
+}
+
+/* 没有链接的那几条：不是链接就不要摆出链接的样子 */
+.news-title.is-plain {
+  color: var(--wb-text-secondary);
+}
+
+.news-meta {
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  align-items: baseline;
+  font-size: var(--wb-text-xs);
+  color: var(--wb-text-muted);
 }
 
 /* ---------- 模块总览 ---------- */

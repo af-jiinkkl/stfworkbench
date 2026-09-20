@@ -1,5 +1,6 @@
 import type { UpcomingAnniversary } from '@/types/anniversary'
 import type { Course } from '@/types/course'
+import type { News } from '@/types/news'
 import type { PlanTask } from '@/types/plan'
 
 /**
@@ -47,4 +48,19 @@ export interface Dashboard {
    * 显示前走 `money()` 格式化，别直接贴上去：`0` 会显示成"¥0"而不是"¥0.00"。
    */
   todayExpenseAmount: number
+  /**
+   * 今日新闻的前几条，已按发布时间倒序（最新的在最前）。
+   *
+   * 与 `/news` 页拿到的是**同一个结构**，但只有前几条 ——
+   * 取几条由后端的 `NewsService.HOME_LATEST_COUNT` 定，前端**不自己截断**：
+   * 在页面里再写一个 `slice(0, 5)` 就成了第二处硬编码，
+   * 改卡片条数时得记得改两个地方。
+   *
+   * 这也是首页唯一一块**不按用户分**的数据：新闻是全局共享的缓存，
+   * 换个账号登录看到的是同一份。别照着它去猜"这是谁的新闻"。
+   *
+   * 没抓到新闻时是空数组（没配 appkey、抓取还没跑、或那天确实没有），
+   * 此时首页整块不出现 —— 和"即将到来"同一套取舍。
+   */
+  latestNews: News[]
 }
