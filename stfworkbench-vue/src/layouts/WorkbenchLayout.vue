@@ -27,6 +27,7 @@ const navItems = [
   { name: 'home', label: '首页', icon: HomeFilled, to: '/' },
   { name: 'plan', label: '每日计划', icon: Calendar, to: '/plan' },
   { name: 'anniversary', label: '生日纪念日', icon: Present, to: '/anniversary' },
+  { name: 'memo', label: '备忘录', icon: Memo, to: '/memo' },
 ]
 
 /**
@@ -37,7 +38,6 @@ const navItems = [
  */
 const upcomingModules = [
   { label: '课程表', icon: Notebook },
-  { label: '备忘录', icon: Memo },
   { label: '每日新闻', icon: Reading },
   { label: '每日消费', icon: Wallet },
 ]

@@ -60,7 +60,7 @@ const modules: HomeModule[] = [
   { label: '每日计划', desc: '今天的待办与完成情况', to: '/plan' },
   { label: '生日纪念日', desc: '重要日子与倒数提醒', to: '/anniversary' },
   { label: '课程表', desc: '每周课程安排' },
-  { label: '备忘录', desc: '随手记下的碎片' },
+  { label: '备忘录', desc: '随手记下的碎片', to: '/memo' },
   { label: '每日新闻', desc: '每天值得一读的几条' },
   { label: '每日消费', desc: '当天花了多少、花在哪' },
 ]

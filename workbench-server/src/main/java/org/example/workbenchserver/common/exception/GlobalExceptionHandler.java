@@ -11,6 +11,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import jakarta.validation.ConstraintViolationException;
 
@@ -68,6 +69,25 @@ public class GlobalExceptionHandler {
 		log.debug("请求体解析失败: {}", e.getMessage());
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
 				.body(Result.error(ResultCode.BAD_REQUEST, "请求体格式错误"));
+	}
+
+	/**
+	 * URL 里的参数类型转不过去，比如 {@code ?pageNum=abc} 或 {@code /api/memo/xyz}。
+	 *
+	 * <p>不接住的话会落到兜底分支变成 500 + 一条 error 堆栈。可这是**客户端传错了**，
+	 * 不是服务端出了故障 —— 报成 500 既误导前端（以为要重试），
+	 * 又让真正需要关注的 500 淹没在噪音里。
+	 *
+	 * <p>注意它能生效的前提是参数声明成基本类型（{@code int}）而不是包装类型：
+	 * 声明成 {@code Integer} 时传 {@code abc} 同样是这个异常，
+	 * 但传**空值**会静默变成 null 而不报错，于是 {@code int} 的拆箱空指针
+	 * 又绕回了 500。所以分页参数用的是 {@code int} + {@code defaultValue}。
+	 */
+	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
+	public ResponseEntity<Result<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+		log.debug("参数类型不匹配: {}={}", e.getName(), e.getValue());
+		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+				.body(Result.error(ResultCode.BAD_REQUEST, e.getName() + " 格式不正确"));
 	}
 
 	/**

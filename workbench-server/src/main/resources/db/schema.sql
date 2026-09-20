@@ -8,6 +8,7 @@
 --   feature/auth-login  ：wb_user
 --   feature/plan-task   ：wb_plan_task
 --   feature/anniversary ：wb_anniversary
+--   feature/memo        ：wb_memo
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS `stfworkbench`
@@ -83,3 +84,22 @@ CREATE TABLE `wb_plan_task` (
   -- (user_id, plan_date) 前导列正好覆盖"查某人某天"和"查某人某段日期"两种查询
   KEY `idx_user_date` (`user_id`, `plan_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='每日计划任务';
+
+-- ------------------------------------------------------------
+-- 备忘录
+-- ------------------------------------------------------------
+-- 本表**含 user_id**，隔离同样由拦截器负责。
+-- `content` 用 TEXT 而不是 VARCHAR：备忘录正文天然可能很长，
+-- 这里属于 CLAUDE.md "避免 text 滥用" 所允许的合理使用（见 docs/数据模型.md §4.4）。
+-- 搜索走 `LIKE '%关键词%'`，用不上索引，但每人几百条的规模下不做过早优化。
+CREATE TABLE `wb_memo` (
+  `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id`     BIGINT       NOT NULL                COMMENT '所属用户',
+  `title`       VARCHAR(100) NOT NULL DEFAULT ''     COMMENT '标题',
+  `content`     TEXT         NULL                    COMMENT '正文',
+  `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                COMMENT '创建时间',
+  `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `deleted`     BIGINT       NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 未删除，非 0 为删除时间戳',
+  PRIMARY KEY (`id`),
+  KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='备忘录';
