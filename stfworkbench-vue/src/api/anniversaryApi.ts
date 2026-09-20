@@ -15,9 +15,9 @@ export function list() {
 /**
  * 即将到来的记录（剩余天数 ≤ 各自的提醒天数）。
  *
- * 生日纪念日页和首页的提前提示（顶部"即将到来"）都调这一个。
- * docs/接口清单.md §7 规划了一个 `/api/dashboard` 聚合端点，
- * 落地后首页会改成只发那一次请求。
+ * 只有生日纪念日页在用。首页的提前提示走的是 `/api/dashboard` 聚合端点
+ * （见 api/dashboardApi.ts）—— 那边返回的是**同一个结构**，
+ * 后端两处调的是同一个 Service 方法，所以两边的"还有几天"不会分叉。
  */
 export function upcoming() {
   return http<UpcomingAnniversary[]>({ url: '/anniversary/upcoming', method: 'get' })
