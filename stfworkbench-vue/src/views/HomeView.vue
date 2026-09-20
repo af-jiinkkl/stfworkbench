@@ -5,6 +5,7 @@ import { Check } from '@element-plus/icons-vue'
 import * as dashboardApi from '@/api/dashboardApi'
 import UpcomingAnniversaryList from '@/components/UpcomingAnniversaryList.vue'
 import { useUserStore } from '@/store/user'
+import { money } from '@/utils/money'
 import type { Dashboard } from '@/types/dashboard'
 
 /**
@@ -16,11 +17,12 @@ const userStore = useUserStore()
 const nickname = computed(() => userStore.userInfo?.nickname ?? '')
 
 /**
- * 首页要的三份数据来自**一次**请求（`GET /api/dashboard`，见 docs/接口清单.md §7）。
+ * 首页要的几份数据来自**一次**请求（`GET /api/dashboard`，见 docs/接口清单.md §7）。
  *
  * 原先是单独调 `/api/anniversary/upcoming`，只够照亮"即将到来"那一块。
- * 现在今日任务、生日提醒、备忘条数一起回来，页面一次成型，
- * 不会先亮一块、再亮一块 —— 那三个请求各有各的 loading，看着像页面在抽搐。
+ * 现在今日任务、生日提醒、备忘条数、今日消费一起回来，页面一次成型，
+ * 不会先亮一块、再亮一块 —— 那几个请求各有各的 loading，看着像页面在抽搐。
+ * 往首页加卡片时也一样：加字段，不要再发一个请求。
  *
  * 拿不到就整体是 null：各块按"没有内容"渲染。首页本来就是入口页，
  * 某个模块的数据没取到不该让整个页面打不开。
@@ -91,7 +93,7 @@ interface HomeModule {
  * 模块总览。与侧边栏那份是同一批，但这里多一句说明 ——
  * 侧边栏只需要名字，首页要讲清每个模块打算做什么。
  *
- * 已实现的三个模块带上一个数字，数字全部来自上面那一次聚合请求。
+ * 已实现的四个模块带上一个数字，数字全部来自上面那一次聚合请求。
  * 写成 computed 是因为它们随 dashboard 变化；静态数组的话要等到
  * 请求回来再手动改数组里的字符串，容易忘。
  *
@@ -122,9 +124,16 @@ const modules = computed<HomeModule[]>(() => {
       to: '/memo',
       meta: dashboard.value ? `共 ${dashboard.value.memoCount} 条` : undefined,
     },
+    {
+      label: '每日消费',
+      desc: '当天花了多少、花在哪',
+      to: '/expense',
+      // 0 是一个**有意义**的数字（今天确实还没花钱），所以照实显示，
+      // 不像生日那样留空。这里显示"¥0.00"是对的，空着反而像没取到数据
+      meta: dashboard.value ? `今日 ¥${money(dashboard.value.todayExpenseAmount)}` : undefined,
+    },
     { label: '课程表', desc: '每周课程安排' },
     { label: '每日新闻', desc: '每天值得一读的几条' },
-    { label: '每日消费', desc: '当天花了多少、花在哪' },
   ]
 })
 </script>

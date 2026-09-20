@@ -19,16 +19,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 首页聚合接口的数据来源与隔离。
  *
- * <p>这个接口是全仓库唯一一个**一次返回三张表**的地方，所以两类风险都集中在这里：
+ * <p>这个接口是全仓库唯一一个**一次返回四张表**的地方，所以两类风险都集中在这里：
  *
  * <ol>
- *   <li><b>隔离</b>：三份数据来自三张表，任何一处拦截器失效，
+ *   <li><b>隔离</b>：四份数据来自四张表，任何一处拦截器失效，
  *       首页上就会冒出别人的东西。其中 {@code memoCount} 最危险 ——
  *       它底层是 {@code selectCount(null)}，代码里一个谓词都没有，
  *       WHERE 完全由拦截器拼出来（见 {@code MemoServiceImpl#count}），
  *       失效时不是一个字段错，而是直接变成全表 COUNT</li>
  *   <li><b>自洽</b>：{@code total} / {@code completed} / {@code tasks} 三个数
- *       必须对得上，且只统计"今天"。这类错不抛异常，只是首页的分母悄悄不对</li>
+ *       必须对得上，且只统计"今天"；{@code todayExpenseAmount} 同理，
+ *       它算的是**今天花掉的钱**，不是全部。这类错不抛异常，
+ *       只是首页的数字悄悄不对 —— 而"今天花了 386 块"这种数没人会去核</li>
  * </ol>
  *
  * <p>数据用原生 {@code JdbcTemplate} 带显式 {@code user_id} 种入，绕开 MyBatis ——
@@ -54,7 +56,7 @@ class DashboardServiceTest {
 	@BeforeEach
 	@AfterEach
 	void cleanTestUsers() {
-		for (String table : new String[] {"wb_plan_task", "wb_anniversary", "wb_memo"}) {
+		for (String table : new String[] {"wb_plan_task", "wb_anniversary", "wb_memo", "wb_expense"}) {
 			jdbcTemplate.update(
 					"DELETE FROM `" + table + "` WHERE `user_id` IN (?, ?, ?)",
 					USER_A, USER_B, USER_C);
@@ -84,6 +86,16 @@ class DashboardServiceTest {
 				userId, title);
 	}
 
+	private void insertExpense(long userId, LocalDate date, String amount) {
+		// 金额传**字符串**而不是 double：double 的 10.10 存进去会被四舍五入成
+		// 10.099999999999999，于是断言里那个数字是从一个已经错了的值算来的，
+		// 就算实现真的算错了也未必看得出来
+		jdbcTemplate.update(
+				"INSERT INTO `wb_expense` (`user_id`, `amount`, `category`, `expense_date`, `remark`) "
+						+ "VALUES (?, ?, '餐饮', ?, '')",
+				userId, amount, date);
+	}
+
 	// ---------- 用例 ----------
 
 	/**
@@ -109,6 +121,12 @@ class DashboardServiceTest {
 
 		insertMemo(USER_A, "A 的备忘");
 
+		insertExpense(USER_A, today, "10.50");
+		insertExpense(USER_A, today, "20.25");
+		// B 的金额刻意大得离谱：隔离一旦失效，合计会变成一万多，
+		// 与"算错了小数点"那种失败一眼就分得开
+		insertExpense(USER_B, today, "9999.00");
+
 		UserContext.set(USER_A);
 		DashboardVO overview = dashboardService.overview();
 
@@ -123,6 +141,39 @@ class DashboardServiceTest {
 				.containsExactly("A 的生日");
 
 		assertThat(overview.memoCount()).isEqualTo(1);
+
+		assertThat(overview.todayExpenseAmount()).isEqualByComparingTo("30.75");
+	}
+
+	/**
+	 * 「今日消费」只算今天，且只算没被删掉的。
+	 *
+	 * <p>昨天和明天的那两笔是关键：这个数走的是
+	 * {@code ExpenseService#sumOf(today, today)}，区间由 DashboardServiceImpl 给出。
+	 * 一旦哪天有人图省事把它改成"不限区间"，昨天和明天的钱就会一起算进"今天花了多少" ——
+	 * 数字大一点，没人会觉得是 bug，只会以为今天确实花了这么多。
+	 *
+	 * <p>软删的那笔同理：它必须被 {@code @TableLogic} 挡在 WHERE 之外。
+	 */
+	@Test
+	@DisplayName("今日消费只算今天的、未删除的记录")
+	void todayExpenseOnlyCoversToday() {
+		LocalDate today = WorkbenchTime.today();
+
+		insertExpense(USER_A, today.minusDays(1), "5.00");
+		insertExpense(USER_A, today, "12.30");
+		insertExpense(USER_A, today, "7.70");
+		insertExpense(USER_A, today.plusDays(1), "100.00");
+
+		insertExpense(USER_A, today, "88.88");
+		jdbcTemplate.update(
+				"UPDATE `wb_expense` SET `deleted` = UNIX_TIMESTAMP() "
+						+ "WHERE `user_id` = ? AND `amount` = 88.88",
+				USER_A);
+
+		UserContext.set(USER_A);
+
+		assertThat(dashboardService.overview().todayExpenseAmount()).isEqualByComparingTo("20.00");
 	}
 
 	/**
@@ -225,11 +276,18 @@ class DashboardServiceTest {
 	 * 新用户什么都没有，首页也得能给出来。
 	 *
 	 * <p>这是**首次登录时**唯一会走到的分支，而它恰恰是开发时最不容易碰到的 ——
-	 * 本地账号多少都攒了点数据。三个来源都为空时若有任何一个返回 null 或抛异常，
+	 * 本地账号多少都攒了点数据。几个来源都为空时若有任何一个返回 null 或抛异常，
 	 * 新用户打开首页就是一片报错。
+	 *
+	 * <p>消费合计这里多钉一句 {@code toPlainString()}：它必须是 {@code 0.00}
+	 * 而不是 {@code 0} 或 null。空区间下这个值来自
+	 * {@code ExpenseServiceImpl#sumOf} 的 {@code reduce} 初值 ——
+	 * 没有记录时它压根不参与求和，换个写法（比如从数据库 SUM 出来再兜底）
+	 * 很容易漏掉小数位，而前端拿到 {@code 0} 会显示成"¥0"而不是"¥0.00"。
+	 * 这种不一致只在**新账号**上出现，开发时几乎看不到。
 	 */
 	@Test
-	@DisplayName("空账号返回 0 / 0 / 空列表 / 0，不抛异常")
+	@DisplayName("空账号返回 0 / 0 / 空列表 / 0 / 0.00，不抛异常")
 	void emptyUserGetsZeroes() {
 		UserContext.set(USER_C);
 		DashboardVO overview = dashboardService.overview();
@@ -239,6 +297,8 @@ class DashboardServiceTest {
 		assertThat(overview.todayPlan().tasks()).isEmpty();
 		assertThat(overview.upcomingAnniversaries()).isEmpty();
 		assertThat(overview.memoCount()).isZero();
+		assertThat(overview.todayExpenseAmount()).isNotNull();
+		assertThat(overview.todayExpenseAmount().toPlainString()).isEqualTo("0.00");
 	}
 
 }

@@ -1,7 +1,9 @@
 package org.example.workbenchserver.service.impl;
 
+import org.example.workbenchserver.common.util.WorkbenchTime;
 import org.example.workbenchserver.service.AnniversaryService;
 import org.example.workbenchserver.service.DashboardService;
+import org.example.workbenchserver.service.ExpenseService;
 import org.example.workbenchserver.service.MemoService;
 import org.example.workbenchserver.service.PlanTaskService;
 import org.example.workbenchserver.vo.DashboardVO;
@@ -10,12 +12,14 @@ import org.example.workbenchserver.vo.TodayPlanVO;
 import org.example.workbenchserver.vo.UpcomingAnniversaryVO;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
  * 首页聚合实现。
  *
- * <p><b>本类一行 SQL 都没有，也不该有。</b>三个数字全部来自其他 Service 的现成方法，
+ * <p><b>本类一行 SQL 都没有，也不该有。</b>每个数字都来自其他 Service 的现成方法，
  * 这既是为了复用，也是为了"口径只有一处"：
  *
  * <ul>
@@ -23,6 +27,7 @@ import java.util.List;
  *       与每日计划页用的是同一个"今天"（{@code WorkbenchTime.today()}）</li>
  *   <li>即将到来的生日走 {@link AnniversaryService#upcoming()}，与纪念日页、
  *       以及原来的 {@code GET /api/anniversary/upcoming} 是同一段代码</li>
+ *   <li>今日消费走 {@link ExpenseService#sumOf}，与消费页的饼图合计是同一条路径</li>
  * </ul>
  *
  * <p>若在这里自己拼一个 {@code LambdaQueryWrapper} 查表，就会有第二份
@@ -38,20 +43,23 @@ public class DashboardServiceImpl implements DashboardService {
 	private final PlanTaskService planTaskService;
 	private final AnniversaryService anniversaryService;
 	private final MemoService memoService;
+	private final ExpenseService expenseService;
 
 	public DashboardServiceImpl(PlanTaskService planTaskService,
 			AnniversaryService anniversaryService,
-			MemoService memoService) {
+			MemoService memoService,
+			ExpenseService expenseService) {
 		this.planTaskService = planTaskService;
 		this.anniversaryService = anniversaryService;
 		this.memoService = memoService;
+		this.expenseService = expenseService;
 	}
 
 	@Override
 	public DashboardVO overview() {
-		// 三个查询串行发出。合并成一条 SQL 会牵进跨表的 union，
-		// 可读性和可维护性都不划算 —— 三次单表查询在这个数据量下毫无压力，
-		// 省下的是**前端那两次 HTTP 往返**，那才是聚合接口的意义所在
+		// 几个查询串行发出。合并成一条 SQL 会牵进跨表的 union，
+		// 可读性和可维护性都不划算 —— 几次单表查询在这个数据量下毫无压力，
+		// 省下的是**前端那几次 HTTP 往返**，那才是聚合接口的意义所在
 		List<PlanTaskVO> todayTasks = planTaskService.listByDate(null);
 
 		// total / completed 由 TodayPlanVO.of 从列表本身推出来，
@@ -60,7 +68,13 @@ public class DashboardServiceImpl implements DashboardService {
 
 		List<UpcomingAnniversaryVO> upcoming = anniversaryService.upcoming();
 
-		return new DashboardVO(todayPlan, upcoming, memoService.count());
+		// "今天"同样来自 WorkbenchTime，与今日计划用的是同一个口径。
+		// 这里传 today..today 而不是让 ExpenseService 提供一个 todayTotal()：
+		// 区间是调用方的事，服务层不需要知道"首页想看今天"这件事
+		LocalDate today = WorkbenchTime.today();
+		BigDecimal todayExpense = expenseService.sumOf(today, today);
+
+		return new DashboardVO(todayPlan, upcoming, memoService.count(), todayExpense);
 	}
 
 }

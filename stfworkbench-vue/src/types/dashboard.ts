@@ -4,8 +4,11 @@ import type { PlanTask } from '@/types/plan'
 /**
  * 首页聚合数据。字段与后端 DashboardVO 一一对应，见 docs/接口清单.md §7。
  *
- * 这个接口不是资源 CRUD，是把首页要用的三份数据打成一次响应 ——
- * 首页原本要发三个请求、维护三个 loading，页面会先亮一块再亮一块。
+ * 这个接口不是资源 CRUD，是把首页要用的几份数据打成一次响应 ——
+ * 首页原本要发几个请求、维护几个 loading，页面会先亮一块再亮一块。
+ *
+ * **首页新增卡片时往这里加字段，而不是在页面里单独再发一个请求。**
+ * 那样又会退回几个 loading 各亮各的，聚合就白做了。
  */
 
 /** 今日计划摘要。total / completed 是后端从 tasks 推出来的，这里直接用 */
@@ -28,4 +31,11 @@ export interface Dashboard {
   upcomingAnniversaries: UpcomingAnniversary[]
   /** 备忘总条数，只用于卡片上显示一个数字 */
   memoCount: number
+  /**
+   * 今日消费合计，恒有值（没有记录时是 0）。
+   *
+   * 与 `amount` 一样是 JSON number —— 后端 BigDecimal 的默认序列化结果。
+   * 显示前走 `money()` 格式化，别直接贴上去：`0` 会显示成"¥0"而不是"¥0.00"。
+   */
+  todayExpenseAmount: number
 }
