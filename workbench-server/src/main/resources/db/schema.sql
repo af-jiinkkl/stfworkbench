@@ -7,6 +7,7 @@
 -- 需要手动运行。表会随各功能分支逐步补齐：
 --   feature/auth-login  ：wb_user
 --   feature/plan-task   ：wb_plan_task
+--   feature/anniversary ：wb_anniversary
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS `stfworkbench`
@@ -37,6 +38,30 @@ CREATE TABLE `wb_user` (
   -- 删除后 deleted 变成时间戳，不再占用那个用户名，可以重新注册。
   UNIQUE KEY `uk_username` (`username`, `deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户表';
+
+-- ------------------------------------------------------------
+-- 生日与纪念日
+-- ------------------------------------------------------------
+-- 生日和纪念日**合表**，用 type 区分（见 docs/数据模型.md §4.3）。
+-- 只存 month + day 不存完整日期：生日每年重复，年份没有意义。
+-- 代价是跨年推算不能在 SQL 里做，取出来在 Java 里算 —— 一个人的
+-- 这类记录通常只有几十条，全量取出的代价可以忽略。
+CREATE TABLE `wb_anniversary` (
+  `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id`     BIGINT       NOT NULL                COMMENT '所属用户',
+  `name`        VARCHAR(50)  NOT NULL                COMMENT '姓名或名称',
+  `type`        TINYINT      NOT NULL                COMMENT '类型：1 生日，2 纪念日',
+  `relation`    VARCHAR(20)  NOT NULL DEFAULT ''     COMMENT '关系：自己/家人/朋友',
+  `month`       TINYINT      NOT NULL                COMMENT '月 1-12',
+  `day`         TINYINT      NOT NULL                COMMENT '日 1-31（2 月可存 29）',
+  `remind_days` TINYINT      NOT NULL DEFAULT 7      COMMENT '提前提醒天数 1-7',
+  `remark`      VARCHAR(255) NOT NULL DEFAULT ''     COMMENT '备注',
+  `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP                COMMENT '创建时间',
+  `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `deleted`     BIGINT       NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 未删除，非 0 为删除时间戳',
+  PRIMARY KEY (`id`),
+  KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='生日与纪念日';
 
 -- ------------------------------------------------------------
 -- 每日计划任务

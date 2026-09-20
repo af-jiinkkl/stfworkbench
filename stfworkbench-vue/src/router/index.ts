@@ -22,7 +22,12 @@ const router = createRouter({
           name: 'plan',
           component: () => import('@/views/PlanView.vue'),
         },
-        // 后续模块（生日 / 课程表 / 备忘 / 新闻 / 消费）加到这一层
+        {
+          path: 'anniversary',
+          name: 'anniversary',
+          component: () => import('@/views/AnniversaryView.vue'),
+        },
+        // 后续模块（课程表 / 备忘 / 新闻 / 消费）加到这一层
       ],
     },
     {
