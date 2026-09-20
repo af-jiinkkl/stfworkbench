@@ -9,9 +9,10 @@
 
 ## 当前状态
 
-**四条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
-生日纪念日（增删改查 + 首页提前提醒）、备忘录（分页 + 关键词搜索 + 详情）。
-首页由 `GET /api/dashboard` 一次聚合今日计划 + 临近生日 + 备忘条数**
+**五条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
+生日纪念日（增删改查 + 首页提前提醒）、备忘录（分页 + 关键词搜索 + 详情）、
+每日消费（增删改查 + 区间/分类筛选 + 分类饼图 + 月度折线图）。
+首页由 `GET /api/dashboard` 一次聚合今日计划 + 临近生日 + 备忘条数 + 今日消费**
 （分支 `feature/auth-login`，尚未合并到 `main`）。
 
 后端：
@@ -36,6 +37,15 @@
 - **清空字段必须用 `LambdaUpdateWrapper` 显式 `.set(..., null)`**，不能用 `updateById`。
   MyBatis-Plus 默认字段更新策略是 `NOT_NULL`，null 字段会被**跳过**而非写进 SQL ——
   每日计划取消勾选时 `completed_time` 正是靠这一点才能清回 null
+- **`createTime` / `updateTime` 一律要带
+  `@TableField(updateStrategy = FieldStrategy.NEVER)`**（五个实体全都要有）。
+  列定义里写着 `ON UPDATE CURRENT_TIMESTAMP` 看着像"库里自己会维护"，但这条规则
+  **只在那一列没被显式赋值时才生效**；而 `updateById(实体)` 会把每个非 null 字段都写进 SET，
+  其中就有刚从库里读出来的旧时间戳 —— 于是 MySQL 把你给它的旧值写回去，自动更新轮不上。
+  症状是"改完保存，列表上的时间纹丝不动"，用户以为没保存上；
+  它不报错，现有的 `updateTime >= createTime` 断言也照样满足，所以**一条用例都不会红**。
+  `EntityTimestampConventionTest` 是为此加的结构性守卫：扫 `@TableName` 注解找出全部实体，
+  凡是声明了这两个字段的都必须带这个注解，漏一个就点名报出来
 - 未查到（含"存在但属于别人"）统一返回 **404 而非 403**：403 等于确认该 id 存在，
   而主键连续自增，这就成了存在性探测点
 - **业务意义上的"今天"一律用 `common/util/WorkbenchTime.today()`**，别在模块里各写一个
@@ -53,27 +63,52 @@
 - **分页参数要自己夹到合法范围**，别指望 MyBatis-Plus 兜底：它对 `size < 0` 的处理是
   "不再改写 SQL"，也就是**不翻页、整表捞出来**，而不是"取 0 条"。
   这类"库替你容错"的行为方向恰好是危险的那一边（见 `MemoServiceImpl#page`）
-- **写接口返回的时间戳必须回读一次再返回**。`create_time` / `update_time` 是数据库的
-  `DEFAULT CURRENT_TIMESTAMP` 填的，MyBatis-Plus 插完**不会**把生成的值带回实体 ——
-  直接把实体转 VO 返回，得到的是一份自相矛盾的数据：POST 说 `createTime: null`，
-  紧接着 GET 同一个 id 却有值。`MemoServiceImpl#create` 因此插完再查一次
+- **写接口（POST / PUT）必须回读一次再返回**：凡是由数据库定的值，MyBatis-Plus 插完
+  **不会**带回实体，直接把实体转 VO 就得到一份自相矛盾的数据（POST 说 `createTime: null`，
+  紧接着 GET 同一个 id 却有值）。已知有两类：
+  - 时间戳 —— `create_time` / `update_time` 由 `DEFAULT CURRENT_TIMESTAMP` 填。
+    `MemoServiceImpl#create` 因此插完再查一次
+  - **`DECIMAL(10,2)` 的小数位** —— 传 `10.5` 存进去是 `10.50`，而实体里那份仍是 scale=1 的
+    `10.5`。这个比时间戳那条更隐蔽：**数值是相等的**，端到端跑一遍都不觉得哪里不对，
+    只有 JSON 原文里才看得出两种写法。断言得用 `toPlainString()`，
+    `isEqualByComparingTo` 会认为两者相等，正好把要验的放过去
 - 备忘录的搜索条件是 `title LIKE ? OR content LIKE ?`。这里的 `and(w -> ...)` **不是**在
   堵一个现成的漏洞 —— 曾以为会被 AND/OR 优先级吃掉 `user_id`，实测不成立：
   MyBatis-Plus 的 `NormalSegmentList.childrenSqlSegment()` 无条件给整段条件套括号（3.5.1 起如此）。
   留着它是防"这层括号是没写进文档的实现细节"。完整说明见 `MemoServiceImpl#page` 的注释
 - 关键词搜索**没有转义 LIKE 通配符**：搜 `%` 会命中自己的全部记录。
   隔离仍然成立（看到的还是自己的），所以当成已知行为记着即可，不算漏洞
-- **`GET /api/dashboard` 一行 SQL 都不写**，三个字段分别调
-  `PlanTaskService#listByDate` / `AnniversaryService#upcoming` / `MemoService#count`。
+- **`GET /api/dashboard` 一行 SQL 都不写**，四个字段分别调
+  `PlanTaskService#listByDate` / `AnniversaryService#upcoming` /
+  `MemoService#count` / `ExpenseService#sumOf`。
   在这一层自己拼 wrapper 就会有第二份"哪些日子算即将到来"的判断 —— 两份都能跑、
-  都不会报错，只在某天悄悄给出不同的天数。聚合省的是**前端那两次 HTTP 往返**，
-  不是后端的一次查询
+  都不会报错，只在某天悄悄给出不同的天数。聚合省的是**前端那几次 HTTP 往返**，
+  不是后端的一次查询。往首页加卡片时往 `DashboardVO` 加字段，别让前端再发一个请求
+- **`ExpenseService#sumOf` 是把 `summaryByCategory` 的结果加起来**，不另写一条
+  `SUM(amount)`。分组本身就是一次查询，这里省的不是查询次数，而是"哪些行该被算进来"
+  只有一处判断 —— 两条路径各写一遍，将来只给一侧加了条件，两边给出的合计数就会不一样，
+  而差几毛钱没有人会当成 bug 报上来
 - `TodayPlanVO#of(tasks)` 里的 `total` / `completed` 由入参**推导**，不让调用方传。
   分开传就有"tasks 里 5 条、total 写着 4"的可能，而这种错不抛异常，
   只是首页的分母悄悄不对。由一处推导，矛盾在结构上就发生不了
 - `MemoServiceImpl#count` 用的是 `selectCount(null)`，**代码里一个谓词都没有** ——
   隔离与逻辑删除全靠拦截器，和 `AnniversaryServiceImpl#upcoming` 属于同一类
   "看不见条件"的查询。这类路径在本仓库一律要单独钉一条用例
+- 消费的分类：**写的时候严，筛的时候松**。写入时 `category` 必须在
+  `common/ExpenseCategory` 里预置的 6 个内（trim 之后比对），
+  非法值 400 且提示里列出**当前**的合法取值（从枚举现推，不抄字面量）；
+  而筛选参数里的 `category` 不做校验，非法值就是"查不到"。这是个刻意的差异：
+  写入的值要落库，筛选只是个查询条件，"没有匹配"本身就是正当答案。
+  统一成一样的话，用户在下拉框里试错会一直撞红字
+- 两张图的补零策略**恰好相反**，都是有意的：按月趋势**恒 12 项**、空月份补 `0.00`
+  （折线图横轴要是完整时间轴，缺月份会把 3 月直接连到 7 月，看着像"稳步增长"）；
+  按分类**不补零**（补了饼图会多出几块永远为 0 的扇区，图例被撑长，
+  真正花过钱的分类反而挤在一起）。补零一律在后端做，前端不许自己拼月份
+- `summaryByMonth` 的 `year` 越界（不在 `1900..9999`）要报**业务异常**，
+  不能直接交给 `LocalDate.of` —— 那会抛 `DateTimeException`，归到 500 去
+- 汇总 SQL 用 `MONTH(expense_date)` 而不是 `DATE_FORMAT(..., '%Y-%m')`：
+  年份已由入参定死，SQL 里没必要再拼一次前缀，顺带让这段 wrapper 不含任何字面量
+  （引号、`%`），而 MyBatis-Plus 对传进 wrapper 的字符串是做注入检查的
 
 测试（`./mvnw test`，需先设 `DB_PASSWORD` 与 `JWT_SECRET`，因为要连真实 MySQL）：
 
@@ -92,12 +127,29 @@
 - `MemoIsolationTest` —— 同 `PlanTaskIsolationTest`，验 `wb_memo` 的隔离。
   它多钉了一条**搜索**路径：这是全仓库唯一一条 WHERE 由代码拼出来的查询
   （其余都是等值匹配或主键查），拼错了是能绕过隔离的
+- `ExpenseIsolationTest` —— 同 `PlanTaskIsolationTest`，验 `wb_expense` 的隔离，
+  另加两条本模块特有的：**两个汇总接口只统计自己的记录**（它们各自是一条
+  `GROUP BY`，条件里没有 `user_id`，隔离全靠拦截器），以及**已逻辑删除的记录不计入汇总**
+  —— 汇总走的是 `selectMaps`，不经过实体，逻辑删除是否被拼进去要单独确认
 - `MemoServiceTest` —— 第一个**服务层**用例，验的是写接口的**响应形状**而不是隔离：
   POST / PUT 返回的 `createTime` / `updateTime` 必须非空且格式正确。
   这个 bug 上过线：数据库的 `DEFAULT CURRENT_TIMESTAMP` 填了值，
   但 MyBatis-Plus 不把它带回来，于是 POST 返回 `null`、紧接着 GET 却有值。
   **上一条隔离测试当时是全绿的** —— 它压根不看那两个字段。
   两个类盯的是不同的东西，缺一个就会漏掉这一类
+- `ExpenseServiceTest` —— 消费的服务层用例，三条主线：**金额的精度与写法**
+  （`0.10 + 0.20` 恰好是 `0.30`，把"金额不许用 FLOAT/DOUBLE"变成会红的断言；
+  `10.5` 进、`10.50` 出）、**写路径的响应形状**、**入参校验**
+  （分类合法性、区间颠倒、`year` 越界、以及"筛选用的非法分类不算错"这条刻意差异）。
+  还有一条 `updateAdvancesUpdateTime` 钉 `ON UPDATE CURRENT_TIMESTAMP` 真的生效 ——
+  它 `sleep(1100)`，因为 DATETIME 只到秒，不跨秒就分不清"变了"和"没变"
+- `EntityTimestampConventionTest` —— **纯结构断言，不连库**。扫 `@TableName` 找出全部实体，
+  凡是声明了 `createTime` / `updateTime` 的都必须带
+  `@TableField(updateStrategy = FieldStrategy.NEVER)`。它盯的不是某一次行为，
+  而是"新加实体时别忘了这个注解"—— 那件事没有任何运行时症状。
+  **已验证过它逮得住**（摘掉 `Memo.updateTime` 上的注解，当场变红并点名报出来）。
+  另有一条常驻用例 `scannerFindsEntities`：万一扫描器哪天扫不到东西，
+  主用例会因为"没有违规项"而永远绿灯 —— 一条永远绿灯的守卫比没有守卫更糟
 - `DashboardServiceTest` —— 首页聚合的**隔离 + 自洽**。它是全仓库唯一一次返回三张表，
   两类风险都聚在这里：三份数据是不是都只含自己的（`memoCount` 那条最要紧，
   它底下的 `selectCount(null)` 代码里没有 WHERE）；以及 `total` / `completed` /
@@ -136,7 +188,25 @@
 - 首页今日任务是**只读**的：不做勾选框、不进编辑，要改去每日计划页。
   两处都能改的话，同一件事就有了两个入口，出问题时不知道是哪边写的
 - 今日任务一条都没有时显示"今天还没有安排"，而不是"已完成 0 / 0" ——
-  后者看着像出了错。同理，生日没有临近记录时卡片上不给数字，空着比"0 条临近"自然
+  后者看着像出了错。同理，生日没有临近记录时卡片上不给数字，空着比"0 条临近"自然。
+  **今日消费的 `0` 要照实显示成 `¥0.00`**，正好相反：它是今天确实还没花钱，
+  是个有意义的数字，空着反而像没取到数据
+- **金额一律走 `src/utils/money.ts` 的 `money()`**，别各处 `toFixed(2)` 拼字符串 ——
+  它带千分位，且首页和消费页都要用。这个模块**故意没有 `add()` / `sum()`**：
+  汇总在后端做（见后端一节），前端把列表里的金额加起来就会多出一份可能分叉的口径
+- 图表统一走 `components/EChart.vue`，不要在页面里各写一份 `echarts.init`：
+  实例用 `shallowRef`（`ref` 会给 echarts 内部几百个对象套 Proxy）；
+  用 `ResizeObserver` 而不是 `window.resize`（侧栏折叠、路由切换也会改变容器宽度）；
+  每次 `setOption(option, true)` 走 notMerge（默认合并会让消失的图例留在屏幕上）；
+  销毁顺序是 `observer.disconnect()` 先于 `chart.dispose()`
+- **图表容器要给固定 `height`，`min-height` 不行** —— echarts 初始化时量到 0 高度，
+  之后不会自己长回来，画出来的是一张高度为 0 的空白。见 `ExpenseView.vue` 的 `.chart-box`
+- echarts 按需引入（`echarts/core` + 各 `echarts/charts`、`components`、`renderers`），
+  消费页因此是**独立懒加载 chunk**（500 kB 量级）。别改成整包引入 ——
+  那笔体积会摊到首屏，而首页只显示一个"今日 ¥xx.xx"的数字，用不上任何图表
+- 消费页保存后，**若这一笔落在当前筛选范围之外就重置筛选**并说明原因
+  （"已保存；这一笔不在当前筛选范围内，已重置筛选"）。不重置的话，
+  补录一笔上个月的账，界面看上去像没保存上 —— 而它其实已经写进库了
 
 ### 启动前必须设置的环境变量
 
