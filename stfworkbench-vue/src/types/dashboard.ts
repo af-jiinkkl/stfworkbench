@@ -1,4 +1,5 @@
 import type { UpcomingAnniversary } from '@/types/anniversary'
+import type { Course } from '@/types/course'
 import type { PlanTask } from '@/types/plan'
 
 /**
@@ -23,6 +24,14 @@ export interface TodayPlan {
 
 export interface Dashboard {
   todayPlan: TodayPlan
+  /**
+   * 今天要上的课，已按节次升序。
+   *
+   * 与课程表页的 `Course` 是**同一个结构** —— "今天算第几周、
+   * 这门课这周上不上"由后端算好（`CourseService#listOnDate`），
+   * 前端不再自己判一遍。今天不属于任何学期（寒暑假、还没建学期）时是**空数组**。
+   */
+  todayCourses: Course[]
   /**
    * 提醒窗口内的生日/纪念日。与 `GET /api/anniversary/upcoming` 返回的是
    * **同一个结构**，所以能直接交给 UpcomingAnniversaryList 渲染 ——
