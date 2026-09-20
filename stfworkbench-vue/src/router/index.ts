@@ -32,7 +32,12 @@ const router = createRouter({
           name: 'memo',
           component: () => import('@/views/MemoView.vue'),
         },
-        // 后续模块（课程表 / 新闻 / 消费）加到这一层
+        {
+          path: 'expense',
+          name: 'expense',
+          component: () => import('@/views/ExpenseView.vue'),
+        },
+        // 后续模块（课程表 / 新闻）加到这一层
       ],
     },
     {

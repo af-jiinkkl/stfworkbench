@@ -9,6 +9,7 @@
 --   feature/plan-task   ：wb_plan_task
 --   feature/anniversary ：wb_anniversary
 --   feature/memo        ：wb_memo
+--   feature/expense     ：wb_expense
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS `stfworkbench`
@@ -103,3 +104,42 @@ CREATE TABLE `wb_memo` (
   PRIMARY KEY (`id`),
   KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='备忘录';
+
+-- ------------------------------------------------------------
+-- 消费记录
+-- ------------------------------------------------------------
+-- 本表**含 user_id**，隔离由拦截器负责。
+--
+-- `amount` 用 DECIMAL(10,2) 而**绝不能用 FLOAT/DOUBLE**：浮点数存钱会丢精度
+-- （0.1 + 0.2 != 0.3），这个是经典事故。10,2 表示最多 10 位、其中 2 位小数，
+-- 即上限 99,999,999.99 —— 对个人记账足够。
+-- 注意 DECIMAL 的"2 位小数"是**四舍五入写入**而不是拒绝：传 0.005 进来会被
+-- 静默存成 0.01。所以入参那边用 @Digits 挡在前面，让客户端拿到一个 400
+-- 而不是一份自己都没察觉的被改过的数据（见 ExpenseDTO）。
+--
+-- `category` 第一版是**预置**分类，用 VARCHAR 存分类名而不是外键表。
+-- 将来要自定义分类时再抽表，届时是一张新表 + 一次数据迁移，不影响本表结构。
+-- 合法取值由后端校验（见 common/ExpenseCategory），非法值返回 400。
+--
+-- `idx_user_date (user_id, expense_date)` 前导列覆盖"查某人某天"和"查某人某段日期"，
+-- 按月趋势（`WHERE user_id = ? AND expense_date BETWEEN ? AND ?` 再
+-- `GROUP BY MONTH(expense_date)`）也用得上它做过滤。
+-- 只有分组那一步用不上索引的有序性：函数包在列上，MySQL 得先取出来再排一次。
+-- 按用户分区后每人的行数很少，这里不做过早优化。
+-- 用 MONTH() 而不是 DATE_FORMAT(..., '%Y-%m') 是因为年份已由入参定死（区间只落在一年内），
+-- SQL 里没必要再拼一次前缀，顺带让这段 wrapper 不含引号和 % ——
+-- 而 MyBatis-Plus 对传进 wrapper 的字符串是做注入检查的。12 个月的名字由 Java 补全。
+CREATE TABLE `wb_expense` (
+  `id`           BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id`      BIGINT        NOT NULL                COMMENT '所属用户',
+  `amount`       DECIMAL(10,2) NOT NULL                COMMENT '金额（元）',
+  `category`     VARCHAR(20)   NOT NULL                COMMENT '消费分类（预置值之一）',
+  `expense_date` DATE          NOT NULL                COMMENT '消费日期',
+  `remark`       VARCHAR(255)  NOT NULL DEFAULT ''     COMMENT '备注',
+  `create_time`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP                COMMENT '创建时间',
+  `update_time`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `deleted`      BIGINT        NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 未删除，非 0 为删除时间戳',
+  PRIMARY KEY (`id`),
+  -- (user_id, expense_date) 前导列正好覆盖"查某人某天"和"查某人某段日期"两种查询
+  KEY `idx_user_date` (`user_id`, `expense_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='消费记录';
