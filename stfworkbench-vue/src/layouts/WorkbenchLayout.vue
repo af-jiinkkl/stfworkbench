@@ -8,6 +8,7 @@ import {
   Notebook,
   Present,
   Reading,
+  SwitchButton,
   Wallet,
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
@@ -86,11 +87,13 @@ async function handleLogout(): Promise<void> {
           :to="item.to"
           class="nav-item"
           :class="{ 'is-active': route.name === item.name }"
+          :title="item.label"
+          :aria-label="item.label"
         >
           <el-icon class="nav-icon">
             <component :is="item.icon" />
           </el-icon>
-          <span>{{ item.label }}</span>
+          <span class="nav-label">{{ item.label }}</span>
         </router-link>
       </nav>
 
@@ -102,9 +105,14 @@ async function handleLogout(): Promise<void> {
         <button
           type="button"
           class="logout"
+          title="退出"
+          aria-label="退出登录"
           @click="handleLogout"
         >
-          退出
+          <el-icon class="logout-icon">
+            <SwitchButton />
+          </el-icon>
+          <span class="logout-text">退出</span>
         </button>
       </div>
     </aside>
@@ -256,10 +264,97 @@ a.nav-item:hover {
   background-color: var(--wb-surface-hover);
 }
 
+/* 退出图标的**默认状态是隐藏**，只在窄屏图标栏里出现。
+   不这么写就等于顺手改了桌面端的样子 —— 上面那条"桌面端零变化"的约束是硬要求。 */
+.logout-icon {
+  display: none;
+}
+
 /* ---------- 内容区 ---------- */
 .content {
   flex: 1;
   min-width: 0; /* 不加的话内部超宽内容会把 flex 容器撑破 */
   overflow-y: auto;
+}
+
+/* ============================================================
+ * 窄屏：侧边栏收成 56px 图标栏（常驻，不做抽屉）
+ *
+ * 268px 的侧边栏在 390px 的手机上会让内容区只剩 122px，整站不可用。
+ * 收成图标栏而不是抽屉，是为了**不引入状态** —— 抽屉要配 `isSidebarOpen`、
+ * 遮罩、Esc、锁 body 滚动、路由变化时自动关这五样，其中"路由变化时忘了关"
+ * 是最容易漏的一条；图标栏把这些全绕开了，导航还始终可见。
+ *
+ * 断点只取 768px 一个：769–1024px 内容区还有 500px 以上，配合各页自己的
+ * 横向滚动已经够用，不再多设一档。
+ * ============================================================ */
+@media (max-width: 768px) {
+  .sidebar {
+    /* 桌面用的 --wb-sidebar-width 保持 268px 不动，只在这里覆盖 */
+    width: 56px;
+  }
+
+  .brand {
+    justify-content: center;
+    padding: 22px 0 18px;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  .nav {
+    padding: 0 8px;
+  }
+
+  /* 图标栏里图标是唯一的表意元素：居中、给足触摸目标（≥40px） */
+  .nav-item {
+    justify-content: center;
+    min-height: 40px;
+    padding: 10px 0;
+  }
+
+  /* 文字隐藏会**同时把它从无障碍树里摘掉**，所以模板里必须补 aria-label ——
+     否则读屏软件读到的是 7 个没有名字的链接。见模板上的 :aria-label。 */
+  .nav-label {
+    display: none;
+  }
+
+  .nav-icon {
+    font-size: 20px;
+  }
+
+  /* 底部改竖排：头像在上、退出在下 */
+  .sidebar-footer {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+  }
+
+  .account {
+    justify-content: center;
+  }
+
+  .account-name {
+    display: none;
+  }
+
+  .logout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 32px;
+    padding: 0;
+  }
+
+  .logout-icon {
+    display: inline-flex;
+    font-size: 18px;
+  }
+
+  .logout-text {
+    display: none;
+  }
 }
 </style>
