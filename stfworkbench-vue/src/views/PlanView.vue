@@ -567,6 +567,16 @@ onMounted(loadDay)
   opacity: 1;
 }
 
+/* 触屏没有 hover：上面那条永远不会生效，而 opacity: 0 的元素**仍然占位、仍然可点** ——
+   用户看不到按钮，却能在那个空位置上误触到"删除"。所以触屏下一律显形。
+   判据用 `hover: none`（输入方式）而不是屏幕宽度：1440px 宽的触摸屏笔记本同样没有
+   悬停，而手机外接鼠标是有的。同理见 AnniversaryView / MemoView / ExpenseView 三处。 */
+@media (hover: none) {
+  .task-actions {
+    opacity: 1;
+  }
+}
+
 /* ---------- 回顾 ---------- */
 .day-group {
   padding: 16px 20px;

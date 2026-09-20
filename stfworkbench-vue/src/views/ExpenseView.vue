@@ -908,6 +908,15 @@ onMounted(refreshAll)
   opacity: 1;
 }
 
+/* 触屏没有 hover，见 PlanView 里同一处的说明。
+   这一处比另外三处更急：表格行不是可聚焦元素，`:focus-within` 那半条也指望不上，
+   所以触屏下这个"删除"按钮原本既看不见、又找不到任何办法让它显形。 */
+@media (hover: none) {
+  .expense-table :deep(.row-actions) {
+    opacity: 1;
+  }
+}
+
 /* ---------- 分页 / 空态 ---------- */
 .pager {
   display: flex;

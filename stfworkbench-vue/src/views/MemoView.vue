@@ -496,6 +496,13 @@ onMounted(load)
   opacity: 1;
 }
 
+/* 触屏没有 hover，见 PlanView 里同一处的说明 */
+@media (hover: none) {
+  .memo-actions {
+    opacity: 1;
+  }
+}
+
 /* ---------- 分页 ---------- */
 .pager {
   display: flex;

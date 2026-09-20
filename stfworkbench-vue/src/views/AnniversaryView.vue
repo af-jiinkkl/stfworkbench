@@ -612,6 +612,13 @@ onMounted(loadAll)
   opacity: 1;
 }
 
+/* 触屏没有 hover，见 PlanView 里同一处的说明 */
+@media (hover: none) {
+  .item-actions {
+    opacity: 1;
+  }
+}
+
 /* ---------- 表单 ---------- */
 .date-row {
   display: flex;
