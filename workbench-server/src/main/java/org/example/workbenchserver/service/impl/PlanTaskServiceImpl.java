@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import org.example.workbenchserver.common.exception.BusinessException;
 import org.example.workbenchserver.common.result.ResultCode;
+import org.example.workbenchserver.common.util.WorkbenchTime;
 import org.example.workbenchserver.dto.PlanTaskCompletedDTO;
 import org.example.workbenchserver.dto.PlanTaskCreateDTO;
 import org.example.workbenchserver.dto.PlanTaskUpdateDTO;
@@ -15,7 +16,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 
 /**
@@ -34,16 +34,6 @@ public class PlanTaskServiceImpl implements PlanTaskService {
 	 */
 	private static final int MAX_RANGE_MONTHS = 6;
 
-	/**
-	 * "今天"按东八区算，**不跟随服务器 JVM 默认时区**。
-	 *
-	 * <p>docs/需求说明.md §4 专门提过这个问题：服务器将来可能部署在境外
-	 * （香港、新加坡等），JVM 默认时区一变，"今天"就跟着变，用户会发现
-	 * 凌晨时分的任务跑到前一天去了。所以这里写死业务时区，
-	 * 与 application.yml 里 Jackson 的 {@code time-zone} 保持一致。
-	 */
-	private static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
-
 	private final PlanTaskMapper planTaskMapper;
 
 	public PlanTaskServiceImpl(PlanTaskMapper planTaskMapper) {
@@ -52,7 +42,7 @@ public class PlanTaskServiceImpl implements PlanTaskService {
 
 	@Override
 	public List<PlanTaskVO> listByDate(LocalDate date) {
-		LocalDate target = (date != null) ? date : LocalDate.now(ZONE);
+		LocalDate target = (date != null) ? date : WorkbenchTime.today();
 
 		List<PlanTask> tasks = planTaskMapper.selectList(new LambdaQueryWrapper<PlanTask>()
 				.eq(PlanTask::getPlanDate, target)
@@ -129,7 +119,7 @@ public class PlanTaskServiceImpl implements PlanTaskService {
 		PlanTask task = requireOwned(id);
 
 		int completed = dto.completed();
-		LocalDateTime completedTime = (completed == 1) ? LocalDateTime.now(ZONE) : null;
+		LocalDateTime completedTime = (completed == 1) ? LocalDateTime.now(WorkbenchTime.ZONE) : null;
 
 		// ⚠️ 这里必须走 UpdateWrapper 显式 set，不能写成 updateById(task)。
 		// MyBatis-Plus 默认的字段更新策略是 NOT_NULL —— null 字段会被**跳过**而不是
