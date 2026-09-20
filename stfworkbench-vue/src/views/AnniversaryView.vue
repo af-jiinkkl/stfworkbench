@@ -54,6 +54,10 @@ async function loadAll(): Promise<void> {
     list.value = all
     upcomingList.value = soon
   }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection ——
+    // 这个函数挂在 onMounted 上，交出去的 promise 没人接
+  }
   finally {
     loading.value = false
   }
@@ -199,6 +203,10 @@ async function save(): Promise<void> {
     // 本地推演一遍等于把后端的排序规则抄到前端，迟早对不上
     await loadAll()
   }
+  catch {
+    // 拦截器弹过提示了。这里**不关弹窗** —— 用户填的内容还在，改完能直接重试；
+    // 关掉等于把刚填好的表单扔了
+  }
   finally {
     submitting.value = false
   }
@@ -217,7 +225,15 @@ async function remove(item: Anniversary): Promise<void> {
     return
   }
 
-  await anniversaryApi.remove(item.id)
+  try {
+    await anniversaryApi.remove(item.id)
+  }
+  catch {
+    // 同 save：拦截器弹过提示，接住是为了不冒成 unhandled rejection。
+    // 直接返回 —— 既不报"已删除"，也不白重拉一次
+    return
+  }
+
   ElMessage.success('已删除')
   await loadAll()
 }

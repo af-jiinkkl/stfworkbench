@@ -41,6 +41,10 @@ async function loadDay(): Promise<void> {
   try {
     tasks.value = await planApi.listByDate(date.value)
   }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection ——
+    // 下面两个调用点（onMounted、onDateChange）都没人接这个 promise
+  }
   finally {
     loading.value = false
   }
@@ -53,7 +57,7 @@ function goToday(): void {
 // 日期一改就重新拉。用 @change 而不是 watch(date)：用户连续翻日历时会触发
 // 多次请求，@change 只在选定后触发一次。
 function onDateChange(): void {
-  loadDay()
+  void loadDay()
 }
 
 async function add(): Promise<void> {
@@ -69,6 +73,10 @@ async function add(): Promise<void> {
     // 所以直接 push 与再次拉取的顺序一致
     tasks.value.push(created)
     newContent.value = ''
+  }
+  catch {
+    // 拦截器弹过提示了。**留着输入框里的内容**，用户改完能直接重试 ——
+    // 清空是写在 try 里成功路径上的，失败时不该走到
   }
   finally {
     adding.value = false
@@ -108,7 +116,15 @@ async function remove(task: PlanTask): Promise<void> {
     return
   }
 
-  await planApi.removeTask(task.id)
+  try {
+    await planApi.removeTask(task.id)
+  }
+  catch {
+    // 同 saveEdit：拦截器弹过提示，接住是为了不冒成 unhandled rejection。
+    // 直接返回 —— 本地那条不能先删掉，否则界面显示已删、刷新一下它又回来了
+    return
+  }
+
   tasks.value = tasks.value.filter((item) => item.id !== task.id)
   ElMessage.success('已删除')
 }
@@ -158,12 +174,21 @@ async function saveEdit(task: PlanTask): Promise<void> {
     return
   }
 
-  const updated = await planApi.updateTask(task.id, { content })
-  const index = tasks.value.findIndex((item) => item.id === task.id)
-  if (index >= 0) {
-    // 就地替换而不是整表重拉：重拉会让列表滚动位置和正在编辑的状态一起丢掉
-    tasks.value[index] = updated
+  try {
+    const updated = await planApi.updateTask(task.id, { content })
+    const index = tasks.value.findIndex((item) => item.id === task.id)
+    if (index >= 0) {
+      // 就地替换而不是整表重拉：重拉会让列表滚动位置和正在编辑的状态一起丢掉
+      tasks.value[index] = updated
+    }
   }
+  catch {
+    // 拦截器弹过提示了。**留在编辑态**让用户改完重试。
+    // 这里若照常往下把 editingId 清掉，那一行会显示回旧内容 ——
+    // 看上去像"保存成功了但没生效"，是最难查的那种表现
+    return
+  }
+
   editingId.value = null
 }
 
@@ -191,6 +216,10 @@ async function loadReview(): Promise<void> {
   reviewLoading.value = true
   try {
     reviewTasks.value = await planApi.listByRange(range.value[0], range.value[1])
+  }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection ——
+    // 两个调用点（onRangeChange、切到回顾模式的 watch）交出去的 promise 都没人接
   }
   finally {
     reviewLoading.value = false

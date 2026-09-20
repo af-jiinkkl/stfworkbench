@@ -33,9 +33,15 @@ async function load(): Promise<void> {
     list.value = result.records
     total.value = result.total
   }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection。
+    //
+    // 这里原先**故意不接**，注释写的是"让调用方（比如 save 之后的重新加载）
+    // 能感知到失败"。但四个调用点 —— onMounted、搜索、删除后重拉、保存后重拉 ——
+    // 没有一个去看它：两个把 promise 丢掉，两个直接 await。也就是说那份"感知能力"
+    // 从来没被用过，实际留下的只有一条 unhandled rejection
+  }
   finally {
-    // 出错时 request.ts 的拦截器已经弹过提示了，这里只负责把 loading 收掉。
-    // 不 catch 掉异常，是为了让调用方（比如 save 之后的重新加载）能感知到失败
     loading.value = false
   }
 }
@@ -168,6 +174,9 @@ async function save(): Promise<void> {
     }
     await load()
   }
+  catch {
+    // 拦截器弹过提示了。这里**不关弹窗** —— 用户填的内容还在，改完能直接重试
+  }
   finally {
     submitting.value = false
   }
@@ -186,7 +195,15 @@ async function remove(item: Memo): Promise<void> {
     return
   }
 
-  await memoApi.remove(item.id)
+  try {
+    await memoApi.remove(item.id)
+  }
+  catch {
+    // 同 save：拦截器弹过提示，接住是为了不冒成 unhandled rejection。
+    // 直接返回 —— 既不报"已删除"，也不白重拉一次
+    return
+  }
+
   ElMessage.success('已删除')
 
   // 删掉的是当前页最后一条时往前退一页。不退的话会停在一张空列表上，

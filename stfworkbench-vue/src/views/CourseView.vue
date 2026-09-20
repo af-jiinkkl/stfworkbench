@@ -170,7 +170,15 @@ function courseWeekText(course: Course): string {
 // ---------- 加载 ----------
 
 async function loadSemesters(): Promise<void> {
-  semesters.value = await semesterApi.list()
+  try {
+    semesters.value = await semesterApi.list()
+  }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection。
+    // onMounted 那条路有 init().catch 兜着，**删学期**那条没有：
+    // removeSemester 最后一句 `await loadSemesters()` 在它自己的 try 之外，
+    // 而它是模板上的 @click 回调
+  }
 }
 
 /**
@@ -192,6 +200,12 @@ async function loadCourses(): Promise<void> {
   loading.value = true
   try {
     courses.value = await courseApi.listBySemester(id)
+  }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection。
+    // 本类的 onMounted 那处已经 `.catch` 过，但**切学期的下拉框**是模板上的
+    // `@update:model-value="selectSemester"` —— 事件回调返回值没人接，
+    // 于是那条路径单独漏在外头。catch 在这里，两条路径就都盖住了
   }
   finally {
     loading.value = false

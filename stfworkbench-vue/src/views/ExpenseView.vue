@@ -120,8 +120,13 @@ async function loadList(): Promise<void> {
     list.value = result.records
     total.value = result.total
   }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection。
+    // 走 refreshAll 那条路本来有人兜（它自带 .catch），漏的是**翻页器**：
+    // handlePageChange 是 `void loadList()`，把 promise 丢掉的同时也没接错误
+  }
   finally {
-    // 出错时 request.ts 的拦截器已经弹过提示了，这里只负责把 loading 收掉
+    // 这里只负责把 loading 收掉
     loading.value = false
   }
 }
@@ -135,13 +140,31 @@ const trendYear = ref(Number(today().slice(0, 4)))
 /** 趋势图的年份选项：今年往前数五年。再往前对个人记账没有意义 */
 const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => trendYear.value - i)
 
+/*
+ * 两张图各自的加载。两个都自己接住错误，理由同 loadList ——
+ * 趋势图那条尤其明显：年份选择器上写的是 `@change="loadTrend"`，
+ * 事件回调的返回值同样没人接。
+ *
+ * 失败时保留上一次的图而不是清空：清空会让卡片变成一片空白，
+ * 看着像"这个月没有数据"，而实际只是这一次请求没成。
+ */
 async function loadPie(): Promise<void> {
   const current = range.value
-  categorySummary.value = await expenseApi.summaryByCategory(current?.[0], current?.[1])
+  try {
+    categorySummary.value = await expenseApi.summaryByCategory(current?.[0], current?.[1])
+  }
+  catch {
+    // 拦截器弹过提示了，见上
+  }
 }
 
 async function loadTrend(): Promise<void> {
-  monthSummary.value = await expenseApi.summaryByMonth(trendYear.value)
+  try {
+    monthSummary.value = await expenseApi.summaryByMonth(trendYear.value)
+  }
+  catch {
+    // 拦截器弹过提示了，见上
+  }
 }
 
 /**
@@ -412,6 +435,11 @@ async function save(): Promise<void> {
     // catch 掉的理由同 refreshAll：拦截器已经弹过提示，这里只求这轮刷新安静结束
     await Promise.all([loadList(), loadPie(), loadTrend()]).catch(() => {})
   }
+  catch {
+    // create / update 失败了。拦截器弹过提示了，这里**不关弹窗** ——
+    // 用户填的内容还在，改完能直接重试。
+    // （关弹窗那一行写在 try 里建/改成功之后，失败时根本走不到）
+  }
   finally {
     submitting.value = false
   }
@@ -430,7 +458,15 @@ async function remove(item: Expense): Promise<void> {
     return
   }
 
-  await expenseApi.remove(item.id)
+  try {
+    await expenseApi.remove(item.id)
+  }
+  catch {
+    // 同 save：拦截器弹过提示，接住是为了不冒成 unhandled rejection。
+    // 直接返回 —— 既不报"已删除"，也不白刷一遍列表和两张图
+    return
+  }
+
   ElMessage.success('已删除')
 
   // 删掉的是当前页最后一条时往前退一页。不退的话会停在一张空列表上，
