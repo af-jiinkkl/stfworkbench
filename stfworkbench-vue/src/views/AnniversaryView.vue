@@ -226,13 +226,13 @@ onMounted(loadAll)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           生日与纪念日
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           提前一点想起来，来得及准备。
         </p>
       </div>
@@ -475,31 +475,8 @@ onMounted(loadAll)
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 /* ---------- 卡片 ---------- */
 .panel {
@@ -649,5 +626,39 @@ onMounted(loadAll)
   font-size: var(--wb-text-sm);
   color: var(--wb-text-muted);
   text-align: center;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 一条记录在桌面端挤着 6 项（日 / 姓名 / 标签 / 关系 / 备注 / 操作），
+     其中三项 flex-shrink: 0。窄屏一行放不下，让它可以换行。 */
+  .item {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  /* 姓名最长 50 个字，而它是 flex-shrink: 0 —— 不肯收缩又不带省略号，
+     一长就把整行顶破。窄屏允许它收缩并截断（桌面端保持原样：
+     那里宽度够，不会触发）。
+
+     flex-basis 归零这一条不能少，理由与 UpcomingAnniversaryList 里同一处
+     相同：**换行看的是 flex base size，不是收缩后的宽度**，而姓名是 nowrap，
+     它的 base size 就是那串长文本，一个人就超过整行 —— 于是"21 日"被独自
+     留在第一行，姓名孤零零占第二行，整条记录摊成五行，
+     而它本来就该是"日 + 姓名 + 标签……"挤一行的。 */
+  .item-name {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 备注桌面端是 flex: 1 挤在第一行末尾，只够显示两三个字。
+     窄屏让它独占一行 —— flex-basis: 100% 的意思是"这一行我全要"，
+     于是它必然换行，前面几项留在上一行。 */
+  .item-remark {
+    flex-basis: 100%;
+  }
 }
 </style>

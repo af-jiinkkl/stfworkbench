@@ -71,6 +71,17 @@
   border-color: var(--wb-primary-active);
 }
 
+/* 弹窗宽度写死了 5 处（440 / 420 / 480 / 560px，落在 4 个页面），
+   每一处都比 390px 的手机屏还宽。
+   这里**不逐个改那 5 处 `width` 属性**，而是统一加一条上限 —— 理由有两层：
+     1. 改 5 处是 5 次机会漏一个，且以后新加弹窗还得记得；
+     2. el-dialog 会 teleport 到 body，**scoped 样式本来就不该管它**
+        （那几处写死宽度是模板属性，不受 scoped 影响才一直没出事）。
+   留 32px 是让两侧各空出 16px，否则弹窗会贴着屏幕边。 */
+.el-dialog {
+  max-width: calc(100vw - 32px);
+}
+
 /* EP 默认用红色星号标「必填」，取色是 --el-color-danger。
    在一套黑白灰里，那是整张页面上唯一的高饱和色，视线全被它拽走。
    这里改成**只标可选、不标必填**：必填项不加符号，可选项在 label 里
@@ -136,4 +147,62 @@ a {
   background-color: var(--wb-surface);
   border: 1px solid var(--wb-border);
   border-radius: var(--wb-radius);
+}
+
+/* 页面外壳。每个工作台页面都是
+     .wb-page > .wb-page-header > (.wb-title + .wb-subtitle)
+   这四条以前在 7 个视图里各抄了一份（`.page` / `.title` / `.subtitle` 逐字相同，
+   `.page-header` 有 6 份相同）。抄 7 份的代价平时看不出来，一到**窄屏适配**
+   就露出来了 —— 光改 padding 就要改 7 个文件，漏一个就是"这一页手机上还是老的"。
+   所以先收成一处，响应式规则随之也只写一处（见本文件末尾）。
+
+   为什么不直接沿用 `.page` 这个类名：Vue 的 `scoped` 会把视图里的 `.page`
+   编译成 `.page[data-v-xxx]`（权重 0,2,0），全局的 `.page`（0,1,0）压不过它，
+   只能上 `!important` —— 那是更糟的选择。所以改用带 `wb-` 前缀的类名
+   （与上面 `.wb-card` 同一套约定），各视图模板跟着改名。 */
+.wb-page {
+  max-width: var(--wb-content-max);
+  padding: 40px;
+  margin: 0 auto;
+}
+
+.wb-title {
+  font-size: var(--wb-text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.wb-subtitle {
+  margin-top: 8px;
+  font-size: var(--wb-text-sm);
+  color: var(--wb-text-muted);
+}
+
+/* 标题块在左、操作按钮在右。**默认不换行** —— 桌面端宽度够，换行反而会让
+   按钮跑到标题下面去。窄屏才允许换行（见下方 @media）。 */
+.wb-page-header {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+
+/* ============================================================
+ * 窄屏（≤768px）
+ *
+ * 断点全站只有这一个。769–1024px 内容区还有 500px 以上，各页自己的横向
+ * 滚动已经够用，不再多设一档 —— 断点多了，每加一个页面都要想"它落在哪一档"。
+ * ============================================================ */
+@media (max-width: 768px) {
+  /* 四边 40px 在 390px 的屏幕上要吃掉 80px，收到 16px */
+  .wb-page {
+    padding: 20px 16px;
+  }
+
+  /* 标题块 + 右侧按钮组（「新建」「记一笔」之类）在窄屏要能换行，
+     否则那一行会把容器撑破，按钮被挤到看不见的地方 */
+  .wb-page-header {
+    flex-wrap: wrap;
+  }
 }

@@ -38,13 +38,13 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           每日新闻
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           每天值得一读的几条，每小时自动更新一次。
         </p>
       </div>
@@ -105,31 +105,8 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 .panel {
   padding: 12px 20px 20px;
@@ -207,5 +184,19 @@ a.news-title:hover {
 
 .empty-hint code {
   font-size: inherit;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 标题 + 来源 + 时间挤一行时，标题只剩下几个字的宽度（它是这一行里
+     唯一需要读的东西）。窄屏让来源和时间整行落到第二行。 */
+  .news-item {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .news-meta {
+    flex-basis: 100%;
+  }
 }
 </style>

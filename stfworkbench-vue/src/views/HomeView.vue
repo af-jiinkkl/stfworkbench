@@ -175,12 +175,12 @@ const modules = computed<HomeModule[]>(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="wb-page">
     <header class="page-header">
-      <h1 class="greeting">
+      <h1 class="wb-title">
         {{ greeting }}<template v-if="nickname">，{{ nickname }}</template>
       </h1>
-      <p class="subtitle">
+      <p class="wb-subtitle">
         下面是规划的模块，做好的可以直接点进去。
       </p>
     </header>
@@ -413,26 +413,11 @@ const modules = computed<HomeModule[]>(() => {
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
+/* 首页这块与其他页不同：没有右侧按钮，是纯块级的标题 + 副标题，
+   所以**不**用共用的 .wb-page-header（那是 space-between 的 flex 行，
+   套上会让标题块收缩到内容宽度，桌面端看得见）。只留一个下边距即可。 */
 .page-header {
   margin-bottom: 28px;
-}
-
-.greeting {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
 }
 
 /* ---------- 今日计划 ---------- */
@@ -748,5 +733,44 @@ a.news-title:hover {
   font-size: var(--wb-text-sm);
   font-weight: 500;
   color: var(--wb-text-secondary);
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 今日课程 / 今日新闻两行都是"主内容 + 补充信息"，
+     而补充信息（地点·老师 / 来源·时间）都是 flex-shrink: 0 —— 窄屏上
+     它们不肯让位，被挤成省略号的只能是中间的课名和标题。允许换行。 */
+  .course,
+  .news {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  /* 节次那 72px 在窄屏太占地方 */
+  .course-time {
+    width: 56px;
+  }
+
+  /* 仅仅"允许换行"还不够：地点和老师加起来往往不到 130px，
+     它们会心安理得地留在第一行，于是被挤扁的还是课名 ——
+     实测课名只剩 91px（六个字），而它才是这一行里唯一要读的东西。
+
+     给课名一个下限，逼它把两个 meta 挤到第二行。50% 不是精确值：那一行
+     总共 260px 上下，课名拿到 137px（约 9 个字，比原来的 6 个多一半），
+     再多会把节次那一列也顶掉。 */
+  .course-name {
+    min-width: 50%;
+  }
+
+  /* 课名 / 标题**不**设 flex-basis: 100%：它们要留在第一行把剩余宽度吃满
+     （课名是 flex: 1，本来就会），设成 100% 反而会把课程行拆成四行
+     ——「节次 / 课名 / 地点 / 老师」。
+
+     课程行不设，靠自然换行：两处 meta 是 flex-shrink: 0，放不下时自己
+     落到第二行，放得下就留在第一行，不必替它决定。
+     新闻行只有一处 meta，让它整行走第二行 —— 标题独占第一行更可读。 */
+  .news-meta {
+    flex-basis: 100%;
+  }
 }
 </style>

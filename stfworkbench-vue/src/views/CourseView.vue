@@ -555,13 +555,13 @@ async function removeSemester(): Promise<void> {
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           课程表
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           一周一屏，翻到第几周就看到第几周。
         </p>
       </div>
@@ -987,31 +987,8 @@ async function removeSemester(): Promise<void> {
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 /* ---------- 工具栏 ---------- */
 .panel {
@@ -1291,5 +1268,36 @@ async function removeSemester(): Promise<void> {
   font-size: var(--wb-text-sm);
   color: var(--wb-text-muted);
   text-align: center;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 课表 760px 宽，窄屏必然横向滚动（.grid-scroll 早就有 overflow-x）。
+     问题在于滚起来之后**看不出哪一行是第几节** —— 左侧那列时段跟着一起滚走了。
+     钉住它，横向翻到周三时还能对上节次。
+
+     sticky 是相对最近的滚动祖先（.grid-scroll）定位的，不是相对视口，
+     所以 left: 0 就是内容区左边缘，不必去算侧边栏那 56px。
+     底色是必须的：不铺底色的话，滚到下面的课块会从这一列底下透出来。
+     （底色由上面 `.corner, .day-head, .band, .slot, .block` 那条统一给，
+     这里不用再写一遍。） */
+  .corner,
+  .band {
+    position: sticky;
+    left: 0;
+    /* 保证时段带压在课块之上 */
+    z-index: 1;
+  }
+
+  /* 学期起止原本靠 margin-left: auto 顶到最右边。窄屏下这一行会换行，
+     换行之后 auto 外边距会把它推到**第二行的最右端** —— 一小截孤零零的文字
+     贴着右边，看着像排版坏了。置零，让它跟在"下一周"后面正常排。 */
+  .toolbar-meta {
+    margin-left: 0;
+  }
+
+  .semester-select {
+    width: 100%;
+  }
 }
 </style>

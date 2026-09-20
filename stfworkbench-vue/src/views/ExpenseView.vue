@@ -440,13 +440,13 @@ onMounted(refreshAll)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           每日消费
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           花在哪儿了，一眼看得见。
         </p>
       </div>
@@ -750,31 +750,8 @@ onMounted(refreshAll)
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 /* ---------- 图表 ---------- */
 .charts {
@@ -936,5 +913,34 @@ onMounted(refreshAll)
 /* ---------- 表单 ---------- */
 .full-width {
   width: 100%;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 两个控件原本定宽 260 / 140px，是为了在桌面端不把「查询」按钮挤出这一行。
+     窄屏下这一行只有 260px 上下（390 - 侧栏 56 - 页面内边距 32 - 卡片内边距 40），
+     光日期选择器一个就把整行占满 —— 分类和按钮只能各占一行，看着像三件不相干的东西。
+
+     `width: 100%` 在这条 flex 行里同时起到了"占满一行"的作用：它是元素的
+     flex-basis（默认 auto 会取 width），basis 等于整行宽 → 换行必然发生，
+     于是预设按钮、两个筛选控件、查询按钮各占一行。
+     `.filter-row` 本来就有 flex-wrap，这里只需要松开定宽。 */
+  .range-picker,
+  .category-select {
+    width: 100%;
+  }
+
+  /* 图表的标题行和「合计 ¥xx.xx」并排时会被挤扁，让它换行 */
+  .chart-head {
+    flex-wrap: wrap;
+  }
+
+  /* 翻页器（上一页 / 页码 / 下一页 / 共 N 条）在 390px 下放不下。
+     让它换行而不是横向溢出 —— 溢出会被算成布局破版。
+     注意 el-pagination 是 EP 的组件，scoped 够不到它内部，所以是 :deep()。 */
+  .pager :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
 }
 </style>

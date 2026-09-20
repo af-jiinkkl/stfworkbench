@@ -244,13 +244,13 @@ onMounted(loadDay)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           每日计划
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           今天要做的事，做完打个勾。
         </p>
       </div>
@@ -440,31 +440,8 @@ onMounted(loadDay)
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 .toolbar {
   display: flex;
@@ -635,5 +612,28 @@ onMounted(loadDay)
   font-size: var(--wb-text-sm);
   color: var(--wb-text-muted);
   text-align: center;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 两条工具栏：按天是"日期 + 回到今天"，回顾是"日期区间 + 最多可查 6 个月"。
+     日期区间控件默认宽 350px 上下，窄屏的内容区还不到 320px —— 会直接顶破。
+     让它占满一行，其余内容换行到下一行。 */
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .toolbar :deep(.el-date-editor) {
+    width: 100%;
+  }
+
+  /* 回顾里每天一块的"日期 + 完成 N/M"。桌面端这两项一左一右，
+     窄屏下 N/M 会被推到很右边、和日期拉得很开，看着像两个不相干的东西，
+     改成上下两行。 */
+  .day-head {
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+  }
 }
 </style>

@@ -71,10 +71,19 @@ function typeLabel(type: number): string {
   background-color: var(--wb-primary-soft);
 }
 
+/* 姓名最长 50 个字，而这里是 flex-shrink: 0 且没有省略号 —— 名字一长，
+   它会把整行顶破（窄屏上尤其明显）。允许它收缩并截断。
+   为什么会轮到它而不是 `.soon-meta`：meta 的 flex-basis 是 0，
+   按收缩权重算下来承担不了任何收缩量，所以超出的部分只会落在姓名上 ——
+   正好是想要的那个行为，不必再给它设 max-width。 */
 .soon-name {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--wb-text-base);
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .soon-meta {
@@ -92,5 +101,47 @@ function typeLabel(type: number): string {
   font-size: var(--wb-text-base);
   font-weight: 500;
   color: var(--wb-text-secondary);
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 不换行的话下面那条 flex-basis: 100% 会被挤回同一行，等于没写 */
+  .soon {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  /* 一行三项（姓名 / 日期·类型·关系 / 倒计时）在 390px 下，
+     中间那项会被挤到只剩省略号 —— 而它恰恰是"这是什么日子"的唯一说明。
+     目标排法是两行：第一行"谁 + 还有几天"，第二行日期·类型·关系。
+
+     要凑出这个排法需要两条规则配合，缺一条都会退化成三行
+     （实测两次都是这么退化的），所以两条写在一起看：
+
+     一是姓名。它的 flex-basis 必须归零，不能留默认的 auto ——
+     **换行是按 flex base size 判的，不是按收缩后的宽度**，而姓名是
+     `white-space: nowrap`，base size 就是那串很长的不换行文本，一个人就超过
+     整行宽度，于是倒计时必然被挤到下一行，**怎么调 order 都没用**。
+     basis 归零后它不再参与"放不放得下"的判断，第一行就装得下姓名 + 倒计时，
+     姓名再靠 flex-grow 吃掉剩下的宽度。
+
+     二是顺序。DOM 顺序是 姓名 → 日期 → 倒计时，所以光给日期那项
+     `flex-basis: 100%` 会把**倒计时**挤到第三行。用 order 把它提到日期前面，
+     布局顺序变成 姓名 → 倒计时 → 日期，第一行才正好是"谁 + 还有几天"。
+     order 只改视觉顺序、不动 DOM，读屏软件读到的仍是"姓名、日期、倒计时"。
+
+     组件是首页与纪念日页共用的，改这一处两处都生效。 */
+  .soon-name {
+    flex: 1 1 0;
+  }
+
+  .soon-count {
+    order: 1;
+  }
+
+  .soon-meta {
+    order: 2;
+    flex-basis: 100%;
+  }
 }
 </style>
