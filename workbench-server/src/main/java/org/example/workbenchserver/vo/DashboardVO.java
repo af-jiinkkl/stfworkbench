@@ -20,6 +20,7 @@ import java.util.List;
  * 那个模块自己的 Service 方法，而不是在这里现拼一条查询。
  *
  * @param todayPlan              今日计划摘要
+ * @param todayCourses           今天要上的课，按节次升序；今天不属于任何学期时是空列表
  * @param upcomingAnniversaries  提前提醒窗口内的生日/纪念日，按剩余天数升序
  * @param memoCount              备忘总条数，只用于卡片上显示一个数字
  * @param todayExpenseAmount     今日消费合计，恒非 null（没有记录时是 0.00）
@@ -27,6 +28,17 @@ import java.util.List;
 public record DashboardVO(
 
 		TodayPlanVO todayPlan,
+
+		/**
+		 * 今天要上的课，复用的是 {@link CourseVO}，与课程表页拿到的是**同一个对象**。
+		 *
+		 * <p>与 {@code upcomingAnniversaries} 同一个理由：首页和课表页各建一个类型，
+		 * "今天算第几周、这门课这周上不上"就可能有第二份判断 ——
+		 * 而它的表现是"课表上显示有、首页说今天没课"，没人会当成 bug 报上来。
+		 *
+		 * <p>今天不属于任何学期（寒暑假、还没建学期）时是**空列表**，不是错误。
+		 */
+		List<CourseVO> todayCourses,
 
 		List<UpcomingAnniversaryVO> upcomingAnniversaries,
 

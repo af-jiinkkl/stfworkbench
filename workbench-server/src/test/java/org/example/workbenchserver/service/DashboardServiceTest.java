@@ -2,6 +2,7 @@ package org.example.workbenchserver.service;
 
 import org.example.workbenchserver.common.util.WorkbenchTime;
 import org.example.workbenchserver.security.UserContext;
+import org.example.workbenchserver.vo.CourseVO;
 import org.example.workbenchserver.vo.DashboardVO;
 import org.example.workbenchserver.vo.PlanTaskVO;
 import org.junit.jupiter.api.AfterEach;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,25 +21,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 首页聚合接口的数据来源与隔离。
  *
- * <p>这个接口是全仓库唯一一个**一次返回四张表**的地方，所以两类风险都集中在这里：
+ * <p>这个接口是全仓库唯一一个**一次返回五张表**的地方，所以两类风险都集中在这里：
  *
  * <ol>
- *   <li><b>隔离</b>：四份数据来自四张表，任何一处拦截器失效，
+ *   <li><b>隔离</b>：五份数据来自五张表，任何一处拦截器失效，
  *       首页上就会冒出别人的东西。其中 {@code memoCount} 最危险 ——
  *       它底层是 {@code selectCount(null)}，代码里一个谓词都没有，
  *       WHERE 完全由拦截器拼出来（见 {@code MemoServiceImpl#count}），
  *       失效时不是一个字段错，而是直接变成全表 COUNT</li>
  *   <li><b>自洽</b>：{@code total} / {@code completed} / {@code tasks} 三个数
- *       必须对得上，且只统计"今天"；{@code todayExpenseAmount} 同理，
- *       它算的是**今天花掉的钱**，不是全部。这类错不抛异常，
- *       只是首页的数字悄悄不对 —— 而"今天花了 386 块"这种数没人会去核</li>
+ *       必须对得上，且只统计"今天"；{@code todayExpenseAmount} 与
+ *       {@code todayCourses} 同理，算的都是**今天**的，不是全部。
+ *       这类错不抛异常，只是首页的数字悄悄不对 ——
+ *       而"今天花了 386 块"这种数没人会去核，
+ *       "今天有几节课"也一样（漏掉一门单周的课，看着就像那天本来没课）</li>
  * </ol>
  *
  * <p>数据用原生 {@code JdbcTemplate} 带显式 {@code user_id} 种入，绕开 MyBatis ——
  * 理由同 {@code PlanTaskIsolationTest}：若改用 Mapper 插，拦截器一失效就会在
  * **插入**阶段抛 NOT NULL，测试红了却红在错误位置，真正的断言根本没跑过。
  *
- * <p>需要真实 MySQL，且三张表都已建好（见 db/schema.sql）。
+ * <p>需要真实 MySQL，且五张表都已建好（见 db/schema.sql）。
  */
 @SpringBootTest
 class DashboardServiceTest {
@@ -56,7 +60,10 @@ class DashboardServiceTest {
 	@BeforeEach
 	@AfterEach
 	void cleanTestUsers() {
-		for (String table : new String[] {"wb_plan_task", "wb_anniversary", "wb_memo", "wb_expense"}) {
+		// 顺序只是为了让读的人先看到课程再看到学期（"课程挂在学期下"）。
+		// 两张表之间没有外键约束，删的先后其实无所谓
+		for (String table : new String[] {"wb_plan_task", "wb_anniversary", "wb_memo", "wb_expense",
+				"wb_course", "wb_semester"}) {
 			jdbcTemplate.update(
 					"DELETE FROM `" + table + "` WHERE `user_id` IN (?, ?, ?)",
 					USER_A, USER_B, USER_C);
@@ -96,6 +103,31 @@ class DashboardServiceTest {
 				userId, amount, date);
 	}
 
+	/** 种一个学期，返回 id。`startDate` 必须是周一（库里没有这个约束，用的人自己保证） */
+	private Long insertSemester(long userId, String name, LocalDate startDate, int totalWeeks) {
+		jdbcTemplate.update(
+				"INSERT INTO `wb_semester` (`user_id`, `name`, `start_date`, `total_weeks`) "
+						+ "VALUES (?, ?, ?, ?)",
+				userId, name, startDate, totalWeeks);
+		return jdbcTemplate.queryForObject(
+				"SELECT `id` FROM `wb_semester` WHERE `user_id` = ? AND `name` = ?",
+				Long.class, userId, name);
+	}
+
+	private void insertCourse(long userId, Long semesterId, String name, int dayOfWeek,
+			int startWeek, int endWeek, int weekType) {
+		jdbcTemplate.update(
+				"INSERT INTO `wb_course` (`user_id`, `semester_id`, `name`, `teacher`, `location`,"
+						+ " `day_of_week`, `start_section`, `end_section`, `start_week`, `end_week`,"
+						+ " `week_type`) VALUES (?, ?, ?, '', '', ?, 1, 2, ?, ?, ?)",
+				userId, semesterId, name, dayOfWeek, startWeek, endWeek, weekType);
+	}
+
+	/** 本学期的第 1 周的周一 —— 种"今天有课"的数据时用它当学期起点，今天必然落在第 1 周内 */
+	private static LocalDate thisMonday() {
+		return WorkbenchTime.today().with(DayOfWeek.MONDAY);
+	}
+
 	// ---------- 用例 ----------
 
 	/**
@@ -127,6 +159,11 @@ class DashboardServiceTest {
 		// 与"算错了小数点"那种失败一眼就分得开
 		insertExpense(USER_B, today, "9999.00");
 
+		Long semesterA = insertSemester(USER_A, "A 的学期", thisMonday(), 18);
+		Long semesterB = insertSemester(USER_B, "B 的学期", thisMonday(), 18);
+		insertCourse(USER_A, semesterA, "A 的课", today.getDayOfWeek().getValue(), 1, 18, 0);
+		insertCourse(USER_B, semesterB, "B 的课", today.getDayOfWeek().getValue(), 1, 18, 0);
+
 		UserContext.set(USER_A);
 		DashboardVO overview = dashboardService.overview();
 
@@ -143,6 +180,10 @@ class DashboardServiceTest {
 		assertThat(overview.memoCount()).isEqualTo(1);
 
 		assertThat(overview.todayExpenseAmount()).isEqualByComparingTo("30.75");
+
+		assertThat(overview.todayCourses())
+				.extracting(CourseVO::name)
+				.containsExactly("A 的课");
 	}
 
 	/**
@@ -245,6 +286,104 @@ class DashboardServiceTest {
 	}
 
 	/**
+	 * 「今日课程」只含**今天**的课。
+	 *
+	 * <p>这是全仓库唯一一处要在 Java 里算"今天是第几周的第几天"的地方，
+	 * 一共要过四道判断才落到某一门课上，每一道错了都只是**安静地漏掉一门课**：
+	 *
+	 * <ol>
+	 *   <li>今天落在哪个学期内（{@code start_date} 起、{@code totalWeeks * 7} 天止）</li>
+	 *   <li>今天是第几周 —— 单双周按它判，不是按日历周</li>
+	 *   <li>今天星期几，与课程的 {@code day_of_week} 比</li>
+	 *   <li>这门课的周次区间是否覆盖本周</li>
+	 * </ol>
+	 *
+	 * <p>下面种了六门课，只有两门该出现；其余四门各自代表上述判断的一种失败方式 ——
+	 * 任何一处改错，界面上看着就是"那天没课"，而不是报错。
+	 */
+	@Test
+	@DisplayName("今日课程只含今天的课：别的星期、别的周次、别的单双周都不算")
+	void todayCoursesOnlyCoverToday() {
+		LocalDate today = WorkbenchTime.today();
+		int todayOfWeek = today.getDayOfWeek().getValue();
+		int anotherDay = todayOfWeek == 1 ? 2 : 1;
+
+		Long semesterA = insertSemester(USER_A, "本学期", thisMonday(), 18);
+		// 该出现：今天、第 1 周起、每周
+		insertCourse(USER_A, semesterA, "今天的课", todayOfWeek, 1, 18, 0);
+		// 不该出现：别的星期几
+		insertCourse(USER_A, semesterA, "别的日子的课", anotherDay, 1, 18, 0);
+		// 不该出现：从第 2 周才开始，今天在第 1 周
+		insertCourse(USER_A, semesterA, "以后才开始的课", todayOfWeek, 2, 18, 0);
+		// 不该出现：双周。今天在第 1 周，是单周
+		insertCourse(USER_A, semesterA, "双周的课", todayOfWeek, 1, 18, 2);
+		// 该出现：单周
+		insertCourse(USER_A, semesterA, "单周的课", todayOfWeek, 1, 18, 1);
+
+		// 不该出现：学期下周才开始，今天不在它里面。
+		// 注意这条课的 day_of_week 也是"今天" —— 挡住它的只可能是"学期不覆盖今天"
+		Long semesterFuture = insertSemester(USER_A, "下学期", thisMonday().plusWeeks(1), 18);
+		insertCourse(USER_A, semesterFuture, "未来学期的课", todayOfWeek, 1, 18, 0);
+
+		UserContext.set(USER_A);
+		DashboardVO overview = dashboardService.overview();
+
+		assertThat(overview.todayCourses())
+				.extracting(CourseVO::name)
+				.containsExactlyInAnyOrder("今天的课", "单周的课");
+	}
+
+	/**
+	 * 今日课程也只含自己的。
+	 *
+	 * <p>A 和 B 各有一个**都包含今天**的学期，各排一门今天的课。
+	 * 这里挡不住的东西尤其多：找"今天属于哪个学期"那一步的 SQL 里**一个字都没有**
+	 * （{@code semesterMapper.selectList(null)}，见 {@code CourseServiceImpl#listOnDate}），
+	 * 隔离全靠拦截器 —— 失效时 B 会直接把自己那个学期当成"A 的当前学期"，
+	 * 于是 A 的首页上出现 B 的课表。
+	 */
+	@Test
+	@DisplayName("今日课程不含别人的")
+	void todayCoursesExcludeOtherUsers() {
+		LocalDate today = WorkbenchTime.today();
+		int todayOfWeek = today.getDayOfWeek().getValue();
+
+		Long semesterA = insertSemester(USER_A, "A 的学期", thisMonday(), 18);
+		Long semesterB = insertSemester(USER_B, "B 的学期", thisMonday(), 18);
+		insertCourse(USER_A, semesterA, "A 的课", todayOfWeek, 1, 18, 0);
+		insertCourse(USER_B, semesterB, "B 的课", todayOfWeek, 1, 18, 0);
+
+		UserContext.set(USER_A);
+		assertThat(dashboardService.overview().todayCourses())
+				.extracting(CourseVO::name)
+				.containsExactly("A 的课");
+
+		UserContext.set(USER_B);
+		assertThat(dashboardService.overview().todayCourses())
+				.extracting(CourseVO::name)
+				.containsExactly("B 的课");
+	}
+
+	/**
+	 * 今天不属于任何学期时是**空列表**，不是错误。
+	 *
+	 * <p>寒暑假里每天都会走这条路。它若抛异常，用户一放假首页就打不开了 ——
+	 * 而那是最不该出问题的时候（正好放假，想看的是别的东西）。
+	 */
+	@Test
+	@DisplayName("没有学期覆盖今天时今日课程是空列表")
+	void todayCoursesAreEmptyOutsideAnySemester() {
+		LocalDate today = WorkbenchTime.today();
+		// 学期已经结束了：从 4 周前开始、只排 2 周，今天在它之后
+		Long finished = insertSemester(USER_A, "早已结束", thisMonday().minusWeeks(4), 2);
+		insertCourse(USER_A, finished, "上学期的课", today.getDayOfWeek().getValue(), 1, 2, 0);
+
+		UserContext.set(USER_A);
+
+		assertThat(dashboardService.overview().todayCourses()).isEmpty();
+	}
+
+	/**
 	 * 三个数字必须互相对得上。
 	 *
 	 * <p>{@code TodayPlanVO.of} 已经保证它们同源（{@code TodayPlanVOTest} 钉了纯逻辑），
@@ -287,7 +426,7 @@ class DashboardServiceTest {
 	 * 这种不一致只在**新账号**上出现，开发时几乎看不到。
 	 */
 	@Test
-	@DisplayName("空账号返回 0 / 0 / 空列表 / 0 / 0.00，不抛异常")
+	@DisplayName("空账号返回 0 / 空课表 / 0 / 0.00，不抛异常")
 	void emptyUserGetsZeroes() {
 		UserContext.set(USER_C);
 		DashboardVO overview = dashboardService.overview();
@@ -296,6 +435,9 @@ class DashboardServiceTest {
 		assertThat(overview.todayPlan().completed()).isZero();
 		assertThat(overview.todayPlan().tasks()).isEmpty();
 		assertThat(overview.upcomingAnniversaries()).isEmpty();
+		// 没建学期的新账号：今日课程这条走的是"找不到包含今天的学期"那个分支，
+		// 必须给空列表而不是 null（前端拿到 null 会在 .length 上炸）
+		assertThat(overview.todayCourses()).isEmpty();
 		assertThat(overview.memoCount()).isZero();
 		assertThat(overview.todayExpenseAmount()).isNotNull();
 		assertThat(overview.todayExpenseAmount().toPlainString()).isEqualTo("0.00");

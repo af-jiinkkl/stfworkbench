@@ -4,14 +4,17 @@ import org.example.workbenchserver.common.result.Result;
 import org.example.workbenchserver.common.result.ResultCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import jakarta.validation.ConstraintViolationException;
 
@@ -88,6 +91,41 @@ public class GlobalExceptionHandler {
 		log.debug("参数类型不匹配: {}={}", e.getName(), e.getValue());
 		return ResponseEntity.status(HttpStatus.BAD_REQUEST)
 				.body(Result.error(ResultCode.BAD_REQUEST, e.getName() + " 格式不正确"));
+	}
+
+	/**
+	 * 请求了一个**不存在的路径**（前端把 URL 写错、或者调了后端还没做的接口）。
+	 *
+	 * <p>不加这一条的话它会落到兜底分支，变成 500 + 一条 error 堆栈 ——
+	 * 于是"前端拼错了地址"看起来像后端崩了，排查方向直接反了
+	 * （同上面 {@code MethodArgumentTypeMismatchException} 那条的理由）。
+	 *
+	 * <p>返回 404 而不是 400：找不到的是**资源**，这正是 404 的定义。
+	 */
+	@ExceptionHandler(NoResourceFoundException.class)
+	public ResponseEntity<Result<Void>> handleNoResourceFound(NoResourceFoundException e) {
+		log.debug("路径不存在: {}", e.getResourcePath());
+		return ResponseEntity.status(HttpStatus.NOT_FOUND)
+				.body(Result.error(ResultCode.NOT_FOUND, "接口不存在"));
+	}
+
+	/**
+	 * **路径存在但方法不对**，比如对只支持 {@code PUT/DELETE} 的
+	 * {@code /api/semester/{id}} 发 {@code GET}。
+	 *
+	 * <p>回 405 并把允许的方法写进响应头 —— 这是 405 该有的样子，
+	 * 前端看一眼就知道该改成什么。同样不该报成 500。
+	 */
+	@ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+	public ResponseEntity<Result<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+		log.debug("请求方法不支持: {}", e.getMessage());
+		HttpHeaders headers = new HttpHeaders();
+		if (e.getSupportedHttpMethods() != null) {
+			headers.setAllow(e.getSupportedHttpMethods());
+		}
+		return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+				.headers(headers)
+				.body(Result.error(ResultCode.METHOD_NOT_ALLOWED));
 	}
 
 	/**

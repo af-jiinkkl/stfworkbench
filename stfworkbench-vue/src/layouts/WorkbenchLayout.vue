@@ -29,6 +29,7 @@ const navItems = [
   { name: 'anniversary', label: '生日纪念日', icon: Present, to: '/anniversary' },
   { name: 'memo', label: '备忘录', icon: Memo, to: '/memo' },
   { name: 'expense', label: '每日消费', icon: Wallet, to: '/expense' },
+  { name: 'course', label: '课程表', icon: Notebook, to: '/course' },
 ]
 
 /**
@@ -38,7 +39,6 @@ const navItems = [
  * 模块落地时，把它从下面这个数组移到 navItems 并加一条路由即可。
  */
 const upcomingModules = [
-  { label: '课程表', icon: Notebook },
   { label: '每日新闻', icon: Reading },
 ]
 

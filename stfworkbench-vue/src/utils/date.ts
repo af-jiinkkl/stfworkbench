@@ -61,6 +61,33 @@ export function addMonths(dateStr: string, months: number): string {
   return toDateString(date)
 }
 
+/**
+ * 这天是星期几，**1 是周一**、7 是周日。
+ *
+ * 与后端 `LocalDate.getDayOfWeek().getValue()` 同一套编号，也与课表的
+ * `dayOfWeek` 字段同一套。刻意**不用** `Date.getDay()` ——
+ * 它返回 0 是周日、1 是周一，两者在周日会差出一天，
+ * 而周日恰好是课程表最右边那一列。
+ */
+export function weekdayOf(dateStr: string): number {
+  const day = fromDateString(dateStr).getDay()
+  return day === 0 ? 7 : day
+}
+
+/**
+ * 从 `from` 到 `to` 相差几天 —— `to` 晚于 `from` 时为正，同一天为 0。
+ *
+ * 课表用它把"第 N 周的星期几"换算成真实日期：两者都先归到本地午夜，
+ * 相减再除以一天的毫秒数。**除以 86400000 之后要 round** ——
+ * 有夏令时的时区（中国没有，但这段代码不该假定）里某两天之间是 23 或 25 小时，
+ * 直接取整会少算/多算一天，而那正是"课表整体偏一天"这类问题的来源。
+ */
+export function diffInDays(from: string, to: string): number {
+  const start = fromDateString(from)
+  const end = fromDateString(to)
+  return Math.round((end.getTime() - start.getTime()) / 86400000)
+}
+
 /** `yyyy-MM-dd` 是否合法。用于兜住手工输入或异常数据 */
 export function isValidDateString(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {

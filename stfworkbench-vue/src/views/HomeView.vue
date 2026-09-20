@@ -6,6 +6,7 @@ import * as dashboardApi from '@/api/dashboardApi'
 import UpcomingAnniversaryList from '@/components/UpcomingAnniversaryList.vue'
 import { useUserStore } from '@/store/user'
 import { money } from '@/utils/money'
+import { sectionText } from '@/types/course'
 import type { Dashboard } from '@/types/dashboard'
 
 /**
@@ -33,6 +34,14 @@ const dashboard = ref<Dashboard | null>(null)
 const TASK_PREVIEW_LIMIT = 6
 
 const upcoming = computed(() => dashboard.value?.upcomingAnniversaries ?? [])
+
+/**
+ * 今天的课。由后端算好（`CourseService#listOnDate`）—— 前端不推"今天第几周"，
+ * 那件事一旦有两份实现，会出现"课表上说有、首页说今天没课"。
+ *
+ * 空数组是**正常状态**（今天没课，或者还没建学期），不是错误。
+ */
+const todayCourses = computed(() => dashboard.value?.todayCourses ?? [])
 
 const todayPlan = computed(() => dashboard.value?.todayPlan ?? null)
 
@@ -132,7 +141,16 @@ const modules = computed<HomeModule[]>(() => {
       // 不像生日那样留空。这里显示"¥0.00"是对的，空着反而像没取到数据
       meta: dashboard.value ? `今日 ¥${money(dashboard.value.todayExpenseAmount)}` : undefined,
     },
-    { label: '课程表', desc: '每周课程安排' },
+    {
+      label: '课程表',
+      desc: '每周课程安排',
+      to: '/course',
+      // "今天没课"要说出来：它是个有用的答案（今天自由），
+      // 但没课时**不占一整块面板**，所以只有这条小字（见下面今日课程那块）
+      meta: dashboard.value
+        ? (todayCourses.value.length ? `今日 ${todayCourses.value.length} 节` : '今天没有课')
+        : undefined,
+    },
     { label: '每日新闻', desc: '每天值得一读的几条' },
   ]
 })
@@ -221,6 +239,49 @@ const modules = computed<HomeModule[]>(() => {
       >
         还有 {{ hiddenTaskCount }} 条，全部 →
       </RouterLink>
+    </section>
+
+    <!-- ========== 今日课程 ========== -->
+    <!-- 有课才出现：没课时不占一整块面板，那句"今天没有课"放在上面的模块卡片里。
+         和"即将到来"同一套取舍：空卡片除了占地方没有别的用处 -->
+    <section
+      v-if="todayCourses.length"
+      class="wb-card panel"
+    >
+      <div class="panel-head">
+        <h2 class="panel-title">
+          今日课程
+        </h2>
+        <span class="head-right">
+          <span class="panel-meta">共 {{ todayCourses.length }} 节</span>
+          <RouterLink
+            to="/course"
+            class="panel-more"
+          >
+            课表 →
+          </RouterLink>
+        </span>
+      </div>
+
+      <!-- 和今日任务一样是**只读**的：不改节次也不改地点，要改去课程表页 -->
+      <ul class="course-list">
+        <li
+          v-for="course in todayCourses"
+          :key="course.id"
+          class="course"
+        >
+          <span class="course-time">{{ sectionText(course.startSection, course.endSection) }}</span>
+          <span class="course-name">{{ course.name }}</span>
+          <span
+            v-if="course.location"
+            class="course-meta"
+          >{{ course.location }}</span>
+          <span
+            v-if="course.teacher"
+            class="course-meta"
+          >{{ course.teacher }}</span>
+        </li>
+      </ul>
     </section>
 
     <!-- ========== 即将到来 ========== -->
@@ -337,6 +398,14 @@ const modules = computed<HomeModule[]>(() => {
   color: var(--wb-text-secondary);
 }
 
+/* 卡片右上角的一撮：数字 + 出口。包一层是为了让 .panel-head 的
+   space-between 只面对"标题"和"右侧这一撮"两项 */
+.head-right {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
 .progress {
   height: 2px;
   overflow: hidden;
@@ -420,6 +489,49 @@ const modules = computed<HomeModule[]>(() => {
 
 .more:hover {
   color: var(--wb-text-secondary);
+}
+
+/* ---------- 今日课程 ---------- */
+.course-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.course {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.course:last-child {
+  border-bottom: none;
+}
+
+/* 节次是这一行里唯一"定宽可比"的东西，给固定宽度让课名上下对齐 */
+.course-time {
+  flex-shrink: 0;
+  width: 72px;
+  font-size: var(--wb-text-xs);
+  color: var(--wb-text-muted);
+}
+
+.course-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--wb-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-meta {
+  flex-shrink: 0;
+  font-size: var(--wb-text-xs);
+  color: var(--wb-text-muted);
 }
 
 /* ---------- 即将到来 ---------- */
