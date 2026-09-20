@@ -11,6 +11,7 @@
 --   feature/memo        ：wb_memo
 --   feature/expense     ：wb_expense
 --   feature/course      ：wb_semester、wb_course
+--   feature/news        ：wb_news
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS `stfworkbench`
@@ -213,3 +214,35 @@ CREATE TABLE `wb_course` (
   -- 前导列覆盖"查某人某学期的全部课"，外加 user_id 本身
   KEY `idx_user_semester` (`user_id`, `semester_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='课程';
+
+-- ------------------------------------------------------------
+-- 新闻缓存
+-- ------------------------------------------------------------
+-- ⚠️ 本表是**全局共享**的：没有 user_id，所有用户看同一份新闻
+-- （需求说明 §3.5）。它是本项目里唯一一张同时缺三样"通用字段"的表 ——
+-- 没有 user_id、没有 update_time、没有 deleted。这是已确认的例外，
+-- 不是漏写：它存的是缓存不是业务数据，逻辑删除在这里没有意义。
+--
+-- 数据来源是**后端定时任务**（NewsFetchJob 每小时拉一次聚合数据），
+-- 绝不能改成"用户请求时实时调第三方接口"—— 那是按次计费的接口，
+-- 几十个用户刷几次页面就把配额耗光了（需求说明 §3.5 把它定为架构决定）。
+--
+-- fetch_date 与 publish_time 是两件事，都要留：
+--   fetch_date  我们**抓到**它的日期，接口按"今天抓的"取数
+--   publish_time 它**发布**的时间，列表按它倒序
+-- 中间隔着的那个空档正是这个表存在的理由 —— 凌晨抓到一条昨晚发布的新闻，
+-- 它属于今天的列表，但发布时间还在昨天。
+--
+-- publish_time 允许为 NULL：第三方偶尔给出解析不了的时间字符串，
+-- 那一条仍值得显示（标题和链接都在），只是排序时排在最后。
+CREATE TABLE `wb_news` (
+  `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `title`        VARCHAR(255) NOT NULL                COMMENT '标题',
+  `source`       VARCHAR(50)  NOT NULL DEFAULT ''     COMMENT '来源（第三方给的 author_name）',
+  `url`          VARCHAR(500) NOT NULL DEFAULT ''     COMMENT '原文链接',
+  `publish_time` DATETIME     NULL                    COMMENT '发布时间，第三方未给出时为 NULL',
+  `fetch_date`   DATE         NOT NULL                COMMENT '抓取日期，按它取"今天的新闻"',
+  `create_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '入库时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_fetch_date` (`fetch_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='新闻缓存';

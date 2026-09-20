@@ -21,14 +21,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 首页聚合接口的数据来源与隔离。
  *
- * <p>这个接口是全仓库唯一一个**一次返回五张表**的地方，所以两类风险都集中在这里：
+ * <p>这个接口是全仓库唯一一个**一次返回六张表**的地方，所以两类风险都集中在这里：
  *
  * <ol>
- *   <li><b>隔离</b>：五份数据来自五张表，任何一处拦截器失效，
+ *   <li><b>隔离</b>：五份数据来自五张带 {@code user_id} 的表，任何一处拦截器失效，
  *       首页上就会冒出别人的东西。其中 {@code memoCount} 最危险 ——
  *       它底层是 {@code selectCount(null)}，代码里一个谓词都没有，
  *       WHERE 完全由拦截器拼出来（见 {@code MemoServiceImpl#count}），
- *       失效时不是一个字段错，而是直接变成全表 COUNT</li>
+ *       失效时不是一个字段错，而是直接变成全表 COUNT。
+ *       第六份 {@code latestNews} 则是**故意不隔离**的那一个
+ *       （它读的 {@code wb_news} 不在任何用户名下），所以本类的隔离用例
+ *       不覆盖它 —— 它有相反方向的用例，见 {@code NewsServiceTest}</li>
  *   <li><b>自洽</b>：{@code total} / {@code completed} / {@code tasks} 三个数
  *       必须对得上，且只统计"今天"；{@code todayExpenseAmount} 与
  *       {@code todayCourses} 同理，算的都是**今天**的，不是全部。
@@ -53,6 +56,10 @@ class DashboardServiceTest {
 
 	@Autowired
 	private DashboardService dashboardService;
+
+	/** 只用来对照首页那几条新闻与 {@code latestToday} 是不是同一批（见 dashboardCarriesLatestNews） */
+	@Autowired
+	private NewsService newsService;
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
@@ -441,6 +448,44 @@ class DashboardServiceTest {
 		assertThat(overview.memoCount()).isZero();
 		assertThat(overview.todayExpenseAmount()).isNotNull();
 		assertThat(overview.todayExpenseAmount().toPlainString()).isEqualTo("0.00");
+		// 新闻这一项断言的只是"非 null"：它是**全局**的，不随新账号变化，
+		// 而这个库里真的有定时任务在写今天的数据，写死条数会依赖跑测试的那一刻
+		assertThat(overview.latestNews()).isNotNull();
+	}
+
+	/**
+	 * 首页的新闻卡片接上了，且不超过规定条数。
+	 *
+	 * <p>断言写成"与 {@code latestToday} 一致"而不是写死标题：
+	 * 新闻是全局的，库里可能有定时任务真抓来的数据。
+	 * 这里要钉的是**接线**（{@code DashboardServiceImpl} 确实把新闻放进来了），
+	 * 以及**条数上限来自 Service 而不是首页自己截断** ——
+	 * 首页一旦自己写一个 5，改卡片条数就得改两处。
+	 */
+	@Test
+	@DisplayName("首页带上今日新闻，条数由 NewsService 决定")
+	void dashboardCarriesLatestNews() {
+		LocalDate today = WorkbenchTime.today();
+		for (int i = 1; i <= 7; i++) {
+			jdbcTemplate.update(
+					"INSERT INTO `wb_news` (`title`, `source`, `url`, `publish_time`, `fetch_date`) "
+							+ "VALUES (?, '', '', ?, ?)",
+					"[用例]新闻-第" + i + "条", today.atTime(6, 0).plusMinutes(i), today);
+		}
+
+		try {
+			UserContext.set(USER_A);
+			DashboardVO overview = dashboardService.overview();
+
+			assertThat(overview.latestNews()).hasSize(NewsService.HOME_LATEST_COUNT);
+			assertThat(overview.latestNews())
+					.isEqualTo(newsService.latestToday(NewsService.HOME_LATEST_COUNT));
+		} finally {
+			// 新闻表**不带 user_id**，上面那个按用户清理的循环够不着它，
+			// 得自己按标题前缀删 —— 而且要放在 finally 里：
+			// 断言失败时若不清理，残留数据会影响后续跑这个类的人
+			jdbcTemplate.update("DELETE FROM `wb_news` WHERE `title` LIKE ?", "[用例]新闻-%");
+		}
 	}
 
 }

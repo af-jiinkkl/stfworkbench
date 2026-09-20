@@ -24,6 +24,7 @@ import java.util.List;
  * @param upcomingAnniversaries  提前提醒窗口内的生日/纪念日，按剩余天数升序
  * @param memoCount              备忘总条数，只用于卡片上显示一个数字
  * @param todayExpenseAmount     今日消费合计，恒非 null（没有记录时是 0.00）
+ * @param latestNews             今日新闻的前几条，按发布时间倒序；没抓到时是空列表
  */
 public record DashboardVO(
 
@@ -52,6 +53,22 @@ public record DashboardVO(
 		 * （见 CLAUDE.md 的数据库规范）。这里虽然是只读的展示值，
 		 * 但只要它有一次以 double 的身份存在过，就迟早会有人拿它去做别的事。
 		 */
-		BigDecimal todayExpenseAmount) {
+		BigDecimal todayExpenseAmount,
+
+		/**
+		 * 今日新闻的前 {@code NewsService.HOME_LATEST_COUNT} 条，复用的是 {@link NewsVO}，
+		 * 与 {@code GET /api/news} 拿到的是**同一个对象**。
+		 *
+		 * <p>只取前几条、不把当天全部塞进来：首页是一张卡片，列表全量在 {@code /news} 页。
+		 * 取几条由 {@code NewsService#latestToday} 决定，首页不自己截断 ——
+		 * 首页一旦写死一个 5，改卡片条数就得改两处。
+		 *
+		 * <p>与其余五个字段有一处根本不同：**它不按用户分**（见 {@code NewsServiceImpl} 的类注释）。
+		 * 所以这里既不用操心越权，也不该有人"顺手"给它补一个隔离条件。
+		 *
+		 * <p>没抓到新闻时是**空列表**，不是错误 —— appkey 没配、抓取失败、
+		 * 或者那天确实还没有内容，首页都只是少一块。
+		 */
+		List<NewsVO> latestNews) {
 
 }
