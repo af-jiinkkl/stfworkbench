@@ -9,7 +9,9 @@
 
 ## 当前状态
 
-**两条链路已打通：注册 → 登录 → 首页，以及每日计划（增删改查 + 勾选 + 回顾）**
+**四条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
+生日纪念日（增删改查 + 首页提前提醒）、备忘录（分页 + 关键词搜索 + 详情）。
+首页由 `GET /api/dashboard` 一次聚合今日计划 + 临近生日 + 备忘条数**
 （分支 `feature/auth-login`，尚未合并到 `main`）。
 
 后端：
@@ -36,6 +38,42 @@
   每日计划取消勾选时 `completed_time` 正是靠这一点才能清回 null
 - 未查到（含"存在但属于别人"）统一返回 **404 而非 403**：403 等于确认该 id 存在，
   而主键连续自增，这就成了存在性探测点
+- **业务意义上的"今天"一律用 `common/util/WorkbenchTime.today()`**，别在模块里各写一个
+  `ZoneId.of("Asia/Shanghai")`。各处自己定义时，每个模块单看都对，跨模块却会漂 —— 这种
+  不一致极难查，因为没有任何一处是"错"的
+- **生日/纪念日只存 `month` + `day`，不存年份**（每年重复，年份没有意义）。代价是"下一次
+  是哪天"必须算：见 `common/util/YearlyRecurrence`，这件事在 SQL 里做不了 —— 12 月看 1 月的
+  生日若按月份大小比较，会得出"已经过了 359 天"。2 月 29 日在平年**退到 2 月 28 日**，
+  不跳到 3 月 1 日：提醒这个场景里"提前想到"比"事后想起"有用
+- **`daysUntil` / `nextDate` 由后端算好返回**（`/api/anniversary/upcoming`），前端不许自己推。
+  前端再算一遍就多出一个可能与后端分叉的口径，而生日差一天没人会当成 bug 报上来
+- **分页接口返回 `PageResult`，不要直接返回 MyBatis-Plus 的 `Page`**（见 `common/result/PageResult`）。
+  `Page` 的 JSON 里带着 `orders` / `optimizeCountSql` / `searchCount` 这些实现细节，
+  一旦序列化出去就成了对外契约，以后想换持久层都换不掉
+- **分页参数要自己夹到合法范围**，别指望 MyBatis-Plus 兜底：它对 `size < 0` 的处理是
+  "不再改写 SQL"，也就是**不翻页、整表捞出来**，而不是"取 0 条"。
+  这类"库替你容错"的行为方向恰好是危险的那一边（见 `MemoServiceImpl#page`）
+- **写接口返回的时间戳必须回读一次再返回**。`create_time` / `update_time` 是数据库的
+  `DEFAULT CURRENT_TIMESTAMP` 填的，MyBatis-Plus 插完**不会**把生成的值带回实体 ——
+  直接把实体转 VO 返回，得到的是一份自相矛盾的数据：POST 说 `createTime: null`，
+  紧接着 GET 同一个 id 却有值。`MemoServiceImpl#create` 因此插完再查一次
+- 备忘录的搜索条件是 `title LIKE ? OR content LIKE ?`。这里的 `and(w -> ...)` **不是**在
+  堵一个现成的漏洞 —— 曾以为会被 AND/OR 优先级吃掉 `user_id`，实测不成立：
+  MyBatis-Plus 的 `NormalSegmentList.childrenSqlSegment()` 无条件给整段条件套括号（3.5.1 起如此）。
+  留着它是防"这层括号是没写进文档的实现细节"。完整说明见 `MemoServiceImpl#page` 的注释
+- 关键词搜索**没有转义 LIKE 通配符**：搜 `%` 会命中自己的全部记录。
+  隔离仍然成立（看到的还是自己的），所以当成已知行为记着即可，不算漏洞
+- **`GET /api/dashboard` 一行 SQL 都不写**，三个字段分别调
+  `PlanTaskService#listByDate` / `AnniversaryService#upcoming` / `MemoService#count`。
+  在这一层自己拼 wrapper 就会有第二份"哪些日子算即将到来"的判断 —— 两份都能跑、
+  都不会报错，只在某天悄悄给出不同的天数。聚合省的是**前端那两次 HTTP 往返**，
+  不是后端的一次查询
+- `TodayPlanVO#of(tasks)` 里的 `total` / `completed` 由入参**推导**，不让调用方传。
+  分开传就有"tasks 里 5 条、total 写着 4"的可能，而这种错不抛异常，
+  只是首页的分母悄悄不对。由一处推导，矛盾在结构上就发生不了
+- `MemoServiceImpl#count` 用的是 `selectCount(null)`，**代码里一个谓词都没有** ——
+  隔离与逻辑删除全靠拦截器，和 `AnniversaryServiceImpl#upcoming` 属于同一类
+  "看不见条件"的查询。这类路径在本仓库一律要单独钉一条用例
 
 测试（`./mvnw test`，需先设 `DB_PASSWORD` 与 `JWT_SECRET`，因为要连真实 MySQL）：
 
@@ -47,6 +85,31 @@
   是否也有效（探针表证明机制可用，它证明本模块确实用上了）。数据用原生 `JdbcTemplate`
   带显式 `user_id` 种入，绕开 MyBatis —— 若改用 Mapper 插，拦截器一失效就会在**插入**
   阶段抛 NOT NULL，测试红了却红在错误位置，读改写删的越权断言根本没跑过
+- `AnniversaryIsolationTest` —— 同 `PlanTaskIsolationTest`，另加一条本模块特有的用例。
+  `upcoming` 是"把当前用户的全部记录取出来、再在 Java 里筛"，SQL 里**没有任何 WHERE**，
+  隔离全靠拦截器，所以这条路径值得单独钉。验证方式：把表加进 `TABLES_WITHOUT_USER_ID`
+  跑一遍，看别人的生日是不是当场出现在你的提醒里（会）
+- `MemoIsolationTest` —— 同 `PlanTaskIsolationTest`，验 `wb_memo` 的隔离。
+  它多钉了一条**搜索**路径：这是全仓库唯一一条 WHERE 由代码拼出来的查询
+  （其余都是等值匹配或主键查），拼错了是能绕过隔离的
+- `MemoServiceTest` —— 第一个**服务层**用例，验的是写接口的**响应形状**而不是隔离：
+  POST / PUT 返回的 `createTime` / `updateTime` 必须非空且格式正确。
+  这个 bug 上过线：数据库的 `DEFAULT CURRENT_TIMESTAMP` 填了值，
+  但 MyBatis-Plus 不把它带回来，于是 POST 返回 `null`、紧接着 GET 却有值。
+  **上一条隔离测试当时是全绿的** —— 它压根不看那两个字段。
+  两个类盯的是不同的东西，缺一个就会漏掉这一类
+- `DashboardServiceTest` —— 首页聚合的**隔离 + 自洽**。它是全仓库唯一一次返回三张表，
+  两类风险都聚在这里：三份数据是不是都只含自己的（`memoCount` 那条最要紧，
+  它底下的 `selectCount(null)` 代码里没有 WHERE）；以及 `total` / `completed` /
+  `tasks` 三个数对不对得上、是不是只统计今天。
+  **已验证过它逮得住**：把 `wb_memo` 加进 `TABLES_WITHOUT_USER_ID`，
+  本类 6 条里 4 条当场变红（`expected: 2L but was: 85L`）
+- `TodayPlanVOTest` —— 纯单元（不连库）。钉的是"`total` / `completed` 必须由
+  `tasks` 推导"这个结构，另有一条不变量式的用例扫一大片组合。
+  它和 `DashboardServiceTest` 分工不同：那边验接了真实数据库之后三个数还对不对得上
+- `YearlyRecurrenceTest` —— 跨年推算的纯单元测试（不连库，<1ms）。这条最值得写：
+  生日算错的表现很隐蔽 —— 界面不报错，只是安静地不提醒，所以闰年、当天、跨年这些
+  边界逐个钉死，另加两条不变量式的用例扫一大片
 - `JacksonConfigTest` —— 无数据库，验证日期格式与 null 字段不被吞掉
 
 前端：
@@ -62,6 +125,18 @@
   自己带 `@DateTimeFormat(iso = ISO.DATE)`，`JacksonConfig` 覆盖不到 MVC 这一层
 - 触屏/悬停之外的交互：`PlanView.vue` 里行内编辑用双击或铅笔图标进入，Enter 保存、
   Esc 取消。取消靠 `editingId` 置空挡掉随后那次 blur，否则"取消"会把改动存进去
+- **`el-select` 放进 flex 行里会被压成一个箭头宽**，选中值随即被裁掉，看上去像没选上。
+  得给那个 `el-form-item` 加 `flex: 1`（见 `AnniversaryView.vue` 的 `.date-row`）。
+  直接放在 `el-form-item` 下的 select 不受影响，所以这个问题只在并排的日期选择器上冒出来
+- 首页的提前提醒与纪念日页共用 `components/UpcomingAnniversaryList.vue`：
+  "还有几天"的说法只该有一处实现，两边各写一遍迟早显示成两个不同的天数
+- 首页的三块数据来自**一次** `GET /api/dashboard`（见 `api/dashboardApi.ts`），
+  不要为了某一块单独再调一次 `/api/anniversary/upcoming` 之类的接口 ——
+  那样又会退回到三个 loading 各亮各的，聚合就白做了
+- 首页今日任务是**只读**的：不做勾选框、不进编辑，要改去每日计划页。
+  两处都能改的话，同一件事就有了两个入口，出问题时不知道是哪边写的
+- 今日任务一条都没有时显示"今天还没有安排"，而不是"已完成 0 / 0" ——
+  后者看着像出了错。同理，生日没有临近记录时卡片上不给数字，空着比"0 条临近"自然
 
 ### 启动前必须设置的环境变量
 
