@@ -8,9 +8,13 @@
 /* ============================================================
  * 一、把 Element Plus 的默认皮肤换掉
  *
- * EP 全部组件都读这些 --el-* 变量，所以改这里等于整体换肤，
+ * EP 的**颜色**几乎全部读这些 --el-* 变量，所以改这里等于整体换肤，
  * 不用一个个组件去写 :deep() 覆盖。默认那套蓝色（#409EFF）
  * 正是「一眼 Element Plus」的来源。
+ *
+ * 但**字号只成立一半**。这句以前写的是"EP 全部组件都读这些变量"——
+ * 对颜色是对的，对字号是错的：另有一批组件的字号写在**自己的类**上，
+ * 或者干脆是编译时写死的字面 px，一个都不读。见下面「字号」那一小节。
  * ============================================================ */
 :root {
   /* 主色由彩色改为近黑 —— 这是整个风格转向的关键一步 */
@@ -51,12 +55,119 @@
   --el-fill-color-blank: var(--wb-surface);
 
   --el-font-family: var(--wb-font-family);
-  /* 让 Element Plus 组件的字号跟着 token 走，否则输入框还是 14px、
-     而周围文字是 15px，两者对不齐会很明显 */
+  /* 这个变量只管得住 EP 的一部分组件：输入框、按钮、表单 label、表格、
+     下拉列表项、单选按钮等。另有一批把字号写死在**自己的类**上或者写成
+     字面 px（下拉框里显示的值、翻页器、日历格子、校验红字……），一个都不读它 ——
+     那些在下面「字号」那一小节里逐个接上。
+     漏接的症状是"输入框的字大了，紧挨着的下拉框还是小的"。 */
   --el-font-size-base: var(--wb-text-base);
 
-  /* 表单控件默认 32px 偏矮，登录这类场景用 40px 更舒展 */
+  /* 弹窗标题与删除确认框的标题读它。EP 默认就是 18px，正好等于新的
+     --wb-text-lg，所以**值没变** —— 接线只是把这个"恰好相等"变成显式依赖，
+     免得以后单独调 lg 时这里悄悄脱节 */
+  --el-font-size-large: var(--wb-text-lg);
+
+  /* 表单控件默认 32px 偏矮，登录这类场景用 40px 更舒展。
+
+     调大字号时**没有**顺带把默认的 32px 抬到 36px，这是个结论不是遗漏：
+     --el-component-size 的消费方只有三个（.el-input / .el-date-editor /
+     .el-input-tag），而 .el-button / .el-select__wrapper / .el-checkbox /
+     .el-pagination 各自把 32px 写死。只抬这一个变量的后果不是"控件一起变大"，
+     而是同一行里出现三种高度（备忘页搜索行 36+32、消费页筛选行 36+32+32）——
+     比"略紧"难看得多，而且看着像 bug。真要抬，那五处得一起抬。 */
   --el-component-size-large: 40px;
+}
+
+/* ---- 字号：EP 有一批字号不读 --el-* 变量，只能逐个接上 ----
+   两类，覆盖的写法不同：
+     1. 变量声明在**组件自己的类**上（.el-select / .el-pagination）——
+        元素上的直接声明永远赢过从 :root 继承来的值，跟权重无关。
+        所以覆盖必须写在同一个选择器上，写进上面那个 :root 里**没有用**；
+     2. 压根不是变量，是 EP 编译时写死的字面 px —— 只能写元素级声明。
+
+   值一律指向 --wb-*，理由同 tokens.css 开头：全站字号只有一个来源。
+
+   这一节是**照着实测渲染结果补的，不是照着 EP 文档补的**，加新规则时也请照做：
+   同一个类名在 EP 的 CSS 里往往挂着好几条按上下文生效的规则
+   （.el-checkbox__label 就有 14px / base / 16px / 12px 四条，谁生效取决于
+   它在哪个组件里），光读文件猜不准哪条赢。先在浏览器里量一次实际字号。 */
+
+/* 下拉框里**显示的那个值**。EP 在 .el-select__wrapper 上写死 font-size:14px，
+   完全不受 --el-font-size-base 影响 —— 漏掉这一条，改完字号后页面上会留下
+   十几个仍是 14px 的下拉框（纪念日的关系、消费的分类、课程表的学期……），
+   而它们旁边的标签和输入框都长大了。 */
+.el-select__wrapper {
+  font-size: var(--wb-text-base);
+}
+
+/* 消费页那个 size="small" 的年份选择器。它权重是 (0,2,0)，
+   上面那条普通的 .el-select__wrapper 压不到，不单独写就孤零零留在 12px */
+.el-select--small .el-select__wrapper {
+  font-size: var(--wb-text-sm);
+}
+
+/* 登录 / 注册页 size="large" 的输入框，同为字面 14px。
+   （默认尺寸的 el-input 走 --el-font-size-base，是跟的，不用管。）
+   不补的话这两页会出现"输入框 14px、旁边按钮 16px"的错位 */
+.el-input--large {
+  font-size: var(--wb-text-base);
+}
+
+/* 这三个的变量声明在组件自己的类上，所以只能写这里 */
+.el-pagination {
+  --el-pagination-font-size: var(--wb-text-base); /* 页码、上一页/下一页、「共 N 条」 */
+}
+
+/* 弹窗正文。注意表单控件的字号**不来自它** —— 输入框、下拉框、label
+   各自有自己的来源，所以只改这一条并不会让弹窗里的表单变大，
+   反过来漏了这一条也不会让表单变小。它管的是直接写在弹窗正文里的文字。 */
+.el-dialog {
+  --el-dialog-content-font-size: var(--wb-text-base);
+}
+
+/* 本项目唯一一个 el-checkbox 在 PlanView:324，而且是**没有 label 的**
+   （自闭合，只有一个勾选框），所以这一条现在看不到任何效果。
+   留着是为了哪天给它加上文字时自动是右边这个尺寸 —— 那正是漏了会出问题的写法 */
+.el-checkbox {
+  --el-checkbox-font-size: var(--wb-text-sm);
+}
+
+/* 金额框（消费）与总周数框（学期）右侧的上下箭头，EP 写死 13px */
+.el-input-number__increase,
+.el-input-number__decrease {
+  font-size: var(--wb-text-sm);
+}
+
+/* 表单校验红字（"请输入用户名"这类）与 show-word-limit 的「0/255」计数器，
+   都是字面 12px */
+.el-form-item__error,
+.el-input .el-input__count,
+.el-textarea .el-input__count {
+  font-size: var(--wb-text-xs);
+}
+
+/* 日期选择器的日历数字：EP 是 12px，而面板标题已经是 16px，
+   格子里的日期反倒比标题小一大截 */
+.el-date-table,
+.el-month-table,
+.el-year-table {
+  font-size: var(--wb-text-sm);
+}
+
+/* 日期区间控件中间那个「至」 */
+.el-date-editor .el-range-separator {
+  font-size: var(--wb-text-base);
+}
+
+/* ElMessage 的 toast 正文 */
+.el-message__content {
+  font-size: var(--wb-text-base);
+}
+
+/* 浮层的兜底字号。本项目实际命中的是消费表格「备注」列的
+   show-overflow-tooltip —— 下拉列表与日历格子各自有更具体的规则，不受它影响 */
+.el-popper {
+  font-size: var(--wb-text-sm);
 }
 
 /* EP 的主按钮悬停写死用 light-3（混 30% 白），黑色按钮悬停会变成灰的，

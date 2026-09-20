@@ -585,6 +585,9 @@ onMounted(loadDay)
   padding: 4px 0;
 }
 
+/* 方框 16px、里面的勾 13px，两个数都**故意**不接字号阶。
+   内容区只有 16 − 2（边框）= 14px，而 --wb-text-sm 已经是 15px ——
+   把 13px 换成那个 token，勾会溢出方框。改这里时两个数要一起算。 */
 .task-mark {
   display: grid;
   place-items: center;

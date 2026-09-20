@@ -7,7 +7,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers'
 
 /**
- * 一个薄薄的 echarts 容器，只负责**生命周期**，不碰业务。
+ * 一个薄薄的 echarts 容器，只负责**生命周期**（外加一个字号默认值），不碰业务。
  *
  * 抽出来是因为"初始化和销毁"这段每个图都要写一遍，而写错的方式很安静：
  * 忘了 dispose，组件卸载后实例还挂在那个已经不在文档里的 div 上；
@@ -46,13 +46,37 @@ const chart = shallowRef<echarts.ECharts>()
 
 let observer: ResizeObserver | undefined
 
+/**
+ * 图表里的字（坐标轴、图例、提示框）要用的字号。
+ *
+ * **ECharts 既不读 CSS 变量，也不会从 body 继承字号** —— 它的默认值是写死的
+ * 12px（`textStyle.fontSize`）。全世界都调大了而这里不调，消费页那两张图
+ * 就会是整页唯一还是 12px 的地方，紧挨着 16px 的表格显得像另一个产品。
+ *
+ * 所以运行时把 token 读出来用，而不是在这儿另抄一个常量 ——
+ * 全站字号只有一个来源这条约定，在这里同样成立。
+ * 读不到时退回 15（即 --wb-text-sm 的当前值），总比画成 12px 接近。
+ */
+function chartFontSize(): number {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue('--wb-text-sm')
+    .trim()
+  const size = Number.parseFloat(raw)
+  return Number.isFinite(size) ? size : 15
+}
+
+/** 给 option 补上默认字号。写成"默认在前"是让调用方仍能整个覆盖 textStyle */
+function withChartDefaults(option: EChartsCoreOption): EChartsCoreOption {
+  return { textStyle: { fontSize: chartFontSize() }, ...option }
+}
+
 onMounted(() => {
   if (!el.value) {
     return
   }
 
   chart.value = echarts.init(el.value)
-  chart.value.setOption(props.option)
+  chart.value.setOption(withChartDefaults(props.option))
 
   // 用 ResizeObserver 而不是 window 的 resize 事件：这个容器变尺寸未必
   // 因为窗口变了 —— 侧边栏折叠、路由切换重排都会让它变窄，
@@ -68,7 +92,7 @@ watch(
     // 默认的合并模式在**系列数量变少**时会把消失的系列留在图上 ——
     // 从 6 个分类筛到 2 个，饼图仍然画着 6 块，后 4 块的数字还是旧的。
     // 这种"看到的和筛出来的对不上"很难被当成 bug 报上来
-    chart.value?.setOption(next, true)
+    chart.value?.setOption(withChartDefaults(next), true)
   },
 )
 

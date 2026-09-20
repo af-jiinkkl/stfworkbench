@@ -311,11 +311,43 @@
 - **金额一律走 `src/utils/money.ts` 的 `money()`**，别各处 `toFixed(2)` 拼字符串 ——
   它带千分位，且首页和消费页都要用。这个模块**故意没有 `add()` / `sum()`**：
   汇总在后端做（见后端一节），前端把列表里的金额加起来就会多出一份可能分叉的口径
+- **字号只有一处来源：`styles/tokens.css` 的六个 `--wb-text-*`**，页面里一律
+  `var(--wb-text-*)`，不要写死 px。调大小是**整阶上移一档**（xs 13 / sm 15 /
+  base 16 / lg 18 / xl 20 / 2xl 24），不是只抬 base —— 全站的引用里 sm 和 xs
+  合起来占七成以上，只抬 base 的后果是"正文大了、紧挨着的说明没大"。
+  **lg 必须跟着 base 走**：base 涨到 16 后 lg 若留在 16，卡片标题就与正文同号
+- **Element Plus 的字号只有一部分读 `--el-font-size-base`**，这是本项目最容易
+  漏的一处。另有一批把字号写在**组件自己的类**上或者干脆是编译时写死的字面 px，
+  一个都不读变量，必须逐个写元素级覆盖（都在 `styles/index.css` 的「字号」那一小节）。
+  三个已实测的坑，都是"改了看不见效果"的典型：
+  - **`.el-select__wrapper` 写死 `font-size:14px`** —— 它就是下拉框里**显示的那个值**。
+    漏掉这一条，改完字号后页面上会留下十几个仍是 14px 的下拉框，而旁边的标签和
+    输入框都长大了。注意 `--el-select-input-font-size` 管的是**下拉箭头图标**，不是它
+  - **`.el-input--large` 写死 14px** —— 登录 / 注册页那两个大输入框，
+    不补会出现"输入框 14px、旁边按钮 16px"
+  - **`.el-dialog__body` 走 `--el-dialog-content-font-size:14px`**（声明在 `.el-dialog` 上）
+
+  **同一个类名在 EP 的 CSS 里往往挂着好几条按上下文生效的规则**
+  （`.el-checkbox__label` 就有 14 / base / 16 / 12 四条，谁赢取决于它在哪个组件里），
+  所以**别读 EP 的 CSS 猜哪个生效**。这条按文件猜错过两次、两个方向各一次
+  （先是把 `--el-select-input-font-size` 当成显示值，改口后又当成它跟着 base 走，
+  两次都不对）。做法是改完在浏览器里量那个元素的实际渲染字号 ——
+  仓库外有 `wb-browser-tools/font-probe.mjs`，它把每个页面的字号聚成直方图，
+  谁没跟着变一眼可见
+- **控件高度没有跟着字号一起抬**（`--el-component-size` 仍是 32px），这是结论不是遗漏：
+  它的消费方只有 `.el-input` / `.el-date-editor` / `.el-input-tag` 三个，而
+  `.el-button` / `.el-select__wrapper` / `.el-checkbox` / `.el-pagination` 各自把
+  32px 写死。只抬这一个变量的后果不是"控件一起变大"，而是**同一行里三种高度**
+  （备忘页搜索行 36+32、消费页筛选行 36+32+32）—— 比"略紧"难看得多，且看着像 bug
 - 图表统一走 `components/EChart.vue`，不要在页面里各写一份 `echarts.init`：
   实例用 `shallowRef`（`ref` 会给 echarts 内部几百个对象套 Proxy）；
   用 `ResizeObserver` 而不是 `window.resize`（侧栏折叠、路由切换也会改变容器宽度）；
   每次 `setOption(option, true)` 走 notMerge（默认合并会让消失的图例留在屏幕上）；
   销毁顺序是 `observer.disconnect()` 先于 `chart.dispose()`
+- **ECharts 既不读 CSS 变量，也不会从 body 继承字号** —— 它的
+  `textStyle.fontSize` 默认写死 12px，不补的话全站只有那两张图的字没跟着变大。
+  `EChart.vue` 因此在 `setOption` 前统一补一个 `textStyle`，值**运行时从
+  `--wb-text-sm` 读出来**，而不是再抄一个常量（全站字号只有一个来源，这里同样成立）
 - **图表容器要给固定 `height`，`min-height` 不行** —— echarts 初始化时量到 0 高度，
   之后不会自己长回来，画出来的是一张高度为 0 的空白。见 `ExpenseView.vue` 的 `.chart-box`
 - echarts 按需引入（`echarts/core` + 各 `echarts/charts`、`components`、`renderers`），
