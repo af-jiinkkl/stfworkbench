@@ -405,7 +405,12 @@ async function save(): Promise<void> {
       hidden ? '已保存；这一笔不在当前筛选范围内，已重置筛选' : (isCreate ? '已保存' : '已更新'),
     )
 
-    await Promise.all([loadList(), loadPie()])
+    // 三样**都**要刷。这里原先只刷了列表和饼图，漏掉趋势图 ——
+    // 于是补录一笔"本月"的账，上面那张"月度趋势"纹丝不动，
+    // 而同一页的删除走的是 refreshAll（三样齐全）。
+    // 同一页面上两个口径，用户看到的是"保存好像没生效"。
+    // catch 掉的理由同 refreshAll：拦截器已经弹过提示，这里只求这轮刷新安静结束
+    await Promise.all([loadList(), loadPie(), loadTrend()]).catch(() => {})
   }
   finally {
     submitting.value = false
