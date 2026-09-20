@@ -9,12 +9,15 @@
 
 ## 当前状态
 
-**六条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
+**七条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
 生日纪念日（增删改查 + 首页提前提醒）、备忘录（分页 + 关键词搜索 + 详情）、
 每日消费（增删改查 + 区间/分类筛选 + 分类饼图 + 月度折线图）、
-课程表（学期 + 每周网格 + 周次导航 + 单双周 + 首页今日课程）。
-首页由 `GET /api/dashboard` 一次聚合今日计划 + 今日课程 + 临近生日 + 备忘条数 + 今日消费**
-（分支 `feature/auth-login`，尚未合并到 `main`）。
+课程表（学期 + 每周网格 + 周次导航 + 单双周 + 首页今日课程）、
+每日新闻（第三方抓取 + 定时任务 + 只读列表 + 首页卡片）。
+首页由 `GET /api/dashboard` 一次聚合今日计划 + 今日课程 + 临近生日 + 备忘条数 + 今日消费 + 最新新闻**。
+
+合并进度：`main` 到每日消费为止（`d509624`），课程表在 `feature/course` 上，
+**新闻模块尚未提交**（按 `db/schema.sql` 顶部的表 → 分支对照表，它属于 `feature/news`）。
 
 后端：
 
@@ -39,7 +42,8 @@
   MyBatis-Plus 默认字段更新策略是 `NOT_NULL`，null 字段会被**跳过**而非写进 SQL ——
   每日计划取消勾选时 `completed_time` 正是靠这一点才能清回 null
 - **`createTime` / `updateTime` 一律要带
-  `@TableField(updateStrategy = FieldStrategy.NEVER)`**（五个实体全都要有）。
+  `@TableField(updateStrategy = FieldStrategy.NEVER)`**（凡声明了这两个字段的实体一律要有；
+  八个实体里只有 `News` 没有 `updateTime`，因为那张缓存表没有任何 UPDATE 路径）。
   列定义里写着 `ON UPDATE CURRENT_TIMESTAMP` 看着像"库里自己会维护"，但这条规则
   **只在那一列没被显式赋值时才生效**；而 `updateById(实体)` 会把每个非 null 字段都写进 SET，
   其中就有刚从库里读出来的旧时间戳 —— 于是 MySQL 把你给它的旧值写回去，自动更新轮不上。
@@ -87,9 +91,9 @@
   留着它是防"这层括号是没写进文档的实现细节"。完整说明见 `MemoServiceImpl#page` 的注释
 - 关键词搜索**没有转义 LIKE 通配符**：搜 `%` 会命中自己的全部记录。
   隔离仍然成立（看到的还是自己的），所以当成已知行为记着即可，不算漏洞
-- **`GET /api/dashboard` 一行 SQL 都不写**，四个字段分别调
-  `PlanTaskService#listByDate` / `AnniversaryService#upcoming` /
-  `MemoService#count` / `ExpenseService#sumOf`。
+- **`GET /api/dashboard` 一行 SQL 都不写**，六个字段分别调
+  `PlanTaskService#listByDate` / `CourseService#listOnDate` / `AnniversaryService#upcoming` /
+  `MemoService#count` / `ExpenseService#sumOf` / `NewsService#latestToday`。
   在这一层自己拼 wrapper 就会有第二份"哪些日子算即将到来"的判断 —— 两份都能跑、
   都不会报错，只在某天悄悄给出不同的天数。聚合省的是**前端那几次 HTTP 往返**，
   不是后端的一次查询。往首页加卡片时往 `DashboardVO` 加字段，别让前端再发一个请求
@@ -137,6 +141,44 @@
   前端 `types/course.ts` 里那份是它的镜像 —— 翻周是纯前端行为，
   后端只有一个 `listOnDate` 管"今天"。两处判反的表现是"单周的课在第 4 周显示出来"，
   界面不报错，只是那门课不该在。要改就两边一起改
+- **`wb_news` 是全项目唯一一张不带 `user_id` 的表，而且这是本该如此**：新闻是所有用户
+  共享的一份缓存，不是谁的私有数据（`wb_user` 不带是因为它本身就是用户表）。两张表并列在
+  `MybatisPlusConfig#TABLES_WITHOUT_USER_ID` 里。**于是这个模块的隔离用例方向与其余七个
+  恰好相反** —— 别的模块验"别人的不能漏进来"，它验"两个用户拿到的必须是同一份"
+  （`NewsServiceTest#newsIsSharedAcrossUsers`）。照抄别的模块的用例模板会把这条写反，
+  而写反了照样全绿：新账号看到空列表，在"该隔离"的模块里是正确表现
+- **第三方接口的成败要看 body 里的 `error_code`，不能看 HTTP 状态码。**
+  **已实测过**：拿一个无效 key 打 `v.juhe.cn/toutiao/index`，返回的是
+  **HTTP 200 + `error_code=10001`**，`reason` 里才写着原因的
+  （见 `JuheNewsSourceClient`）。只认状态码的话，一次失败的抓取会被记成"成功 0 条"，
+  真正的失败原因一直在 body 里没人看
+- `result.data` **可能是 null**（接口正常、当天就是没内容）。这要当成空列表，
+  不能当异常 —— "抓取失败"（抛异常、跳过这一轮并记 warn）和"这次没有新闻"
+  （正常，什么都不写）是两件事，混成一件会让空内容的日志一直报错
+- **定时任务线程上没有登录态**：`NewsFetchJob` 跑在 `scheduling-1` 上，
+  而租户插件的 `UserContext.require()` 是抛 401 的 —— 所以后台任务**只能**访问
+  `TABLES_WITHOUT_USER_ID` 里的表。把 `wb_news` 从那个集合里摘掉试过一次：
+  `NewsServiceTest` 12 条里 10 条当场变红，**且红成两种互不相干的样子** ——
+  没设 `UserContext` 的报 `未登录或登录已过期`（栈顶落在 `NewsServiceImpl` 里，
+  看着像认证出了 bug），设了 `UserContext` 的报 `BadSqlGrammar`（没有 `user_id` 列）。
+  两种都不会指向真正的原因
+- **`@EnableScheduling` 放在独立的 `SchedulingConfig` 上，不要放启动类** ——
+  理由与 `@MapperScan` 留在 `MybatisPlusConfig` 完全相同：切片测试沿包向上会把启动类
+  当配置类捡走，而切片不装配调度
+- **未配置 `JUHE_NEWS_KEY` 不影响启动**，只是每轮抓取记一条 DEBUG 然后跳过。
+  这与 `JWT_SECRET` 缺了就启动失败**刻意相反**，看着像前后矛盾，其实各有理由：
+  JWT 密钥没有安全默认值可取（猜得出的密钥等于没有认证），而新闻源没配就是没配，
+  登进去少一张卡片远比服务起不来合适
+- **抓取靠"当天去重"保证幂等**（`NewsServiceImpl#refresh` 的 `existingTitlesOn`）：
+  cron 每小时一次，不去重的话同一条新闻一天写 24 遍，列表上全是重复条目。
+  去重键是 `(fetch_date, title)`，**库里没有唯一键兜底**（`wb_news` 只有
+  `idx_fetch_date` 一个索引），所以这段判重是唯一的一道防线，不要以为数据库会拦。
+  跨天不比对：`fetch_date` 不同本来就是两行
+- **超长的三个字段一律截断而不是丢掉这一条**（`NewsServiceImpl#clip`，宽度抄 `schema.sql`）。
+  MySQL 严格模式下超长会让**整条 INSERT** 失败，为了一条标题长的新闻
+  把同批另外几十条一起丢掉是最不划算的；截掉尾巴的那条至少还点得开
+- `GET /api/news` 是**只读**的：没有刷新接口。聚合数据的免费额度是有限的，
+  一个"立即刷新"按钮就是一个人人可点的放大器；抓取交给后台任务，前端只负责看
 
 测试（`./mvnw test`，需先设 `DB_PASSWORD` 与 `JWT_SECRET`，因为要连真实 MySQL）：
 
@@ -178,12 +220,15 @@
   **已验证过它逮得住**（摘掉 `Memo.updateTime` 上的注解，当场变红并点名报出来）。
   另有一条常驻用例 `scannerFindsEntities`：万一扫描器哪天扫不到东西，
   主用例会因为"没有违规项"而永远绿灯 —— 一条永远绿灯的守卫比没有守卫更糟
-- `DashboardServiceTest` —— 首页聚合的**隔离 + 自洽**。它是全仓库唯一一次返回三张表，
-  两类风险都聚在这里：三份数据是不是都只含自己的（`memoCount` 那条最要紧，
+- `DashboardServiceTest` —— 首页聚合的**隔离 + 自洽**。它是全仓库唯一一次同时返回六张表，
+  两类风险都聚在这里：六份数据是不是都只含自己的（`memoCount` 那条最要紧，
   它底下的 `selectCount(null)` 代码里没有 WHERE）；以及 `total` / `completed` /
   `tasks` 三个数对不对得上、是不是只统计今天。
   **已验证过它逮得住**：把 `wb_memo` 加进 `TABLES_WITHOUT_USER_ID`，
-  本类 6 条里 4 条当场变红（`expected: 2L but was: 85L`）
+  本类当场红掉 4 条（`expected: 2L but was: 85L`）。
+  第六个字段 `latestNews` 是这里**唯一一个不按用户分**的，所以它验的是反面：
+  两个用户的 `latestNews` 必须一致，且与 `newsService.latestToday(5)` 逐条相等 ——
+  往 `wb_news` 里种数据的清理也只能按**标题前缀**删，那个按用户循环清理的写法够不着它
 - `TodayPlanVOTest` —— 纯单元（不连库）。钉的是"`total` / `completed` 必须由
   `tasks` 推导"这个结构，另有一条不变量式的用例扫一大片组合。
   它和 `DashboardServiceTest` 分工不同：那边验接了真实数据库之后三个数还对不对得上
@@ -213,6 +258,21 @@
   MyBatis-Plus 默认跳过 null 字段，所以 `CourseServiceImpl#apply` 把可空的
   老师 / 地点 `trimToEmpty` 成**空串**（PUT 是全量替换，留成 null 的话那条 SET 会整条消失，
   界面上看着已清空、刷新一下旧值又回来了）
+- `NewsServiceTest` —— 新闻的服务层用例，两类主线都是本模块独有的。
+  **读取**：只取今天、按 `publishTime` 倒序、没有时间的排最后（`listByDateFiltersAndOrders`
+  种数据时刻意打乱插入顺序，否则"插入顺序恰好等于查询顺序"会被误判成排序生效）。
+  **抓取**：幂等（连跑两次第二次写 0 条）、同一次抓取内部也去重、来源返回空数据时
+  一条都不写、来源失败时**异常照抛出去**（让 `NewsFetchJob` 去决定跳过）、超长标题被截断。
+  另有两条别的模块给不出的：`newsIsSharedAcrossUsers`（两个用户同一份）与
+  `refreshWorksWithoutLoginContext`（调度线程上无登录态也能跑）。
+  假来源是直接 `new NewsServiceImpl(newsMapper, client)` 塞进去的，
+  不走 Spring 容器 —— 因此不必为测试改生产代码的注入方式。
+  清理**按标题前缀 `[用例]新闻-`**删，不能按日期：库里真的有定时任务在写今天的数据
+- `JuheNewsSourceClientTest` —— 纯单元，不连库也不连网（把第三方响应写成字符串喂进去）。
+  钉的是解析与"什么算失败"：`error_code` 非 0 抛业务异常（提示里带 reason 与 code）、
+  缺 `error_code` 也算失败、非 JSON 响应要把报文前缀带进异常、`result.data` 为 null 返回空列表、
+  时间缺失 / 只有日期 / 解析不了三种都**保留该条**（宁可没有时间，也不要少一条新闻）、
+  无标题的条目丢弃。整个类不碰数据库，因为这一层本来就不该知道库的存在
 
 前端：
 
@@ -278,6 +338,29 @@
   `margin-right: auto` **不管用**（auto 外边距只对块级/弹性项生效）。
   要把"删除"单独推到最左边，得先用 `:deep(.el-dialog__footer) { display: flex }` 把它变成 flex。
   它是 el-dialog 渲染的、不在本组件模板里，scoped 选择器够不到，必须 `:deep()`
+- `/news` 页是**只读**的：没有新建 / 编辑 / 删除，也**没有"立即刷新"按钮**。
+  缺刷新按钮不是漏做 —— 抓取走后台定时任务，而这个接口背后的免费额度有限，
+  一个谁都能点的刷新按钮就是一个人人可点的放大器。页面顶多显示"今日已更新"，
+  想换一批等下一轮抓取
+- 新闻为空时 `/news` 页的空状态**必须说明为什么**（要配 `JUHE_NEWS_KEY`）。
+  只说"今天还没有新闻"的话，用户无从判断是没配、抓取坏了、还是真的没新闻 ——
+  三种情况的处理方式完全不同
+- `timeText()`（`types/news.ts`）只有一处实现，首页卡片与 `/news` 页都调它。
+  和 `UpcomingAnniversaryList` 是同一条规矩：`"2026-09-21 08:30:00"` → `"09-21 08:30"`
+  这种切分各写一遍，迟早一处显示成 9-21、另一处 09-21。
+  它**纯字符串切分、不经过 `Date`** —— 时间戳已经由后端格式化好了，再解析一次
+  只会多出一个可能与后端分叉的时区口径（见上面日期那一节）
+- **首页新闻卡片不显示条数**，只写"今日已更新"。聚合接口只带前 5 条，
+  卡片上写"共 5 条"会与 `/news` 页的真实条数对不上，而这个数字没有任何人会去核。
+  同一份数据在两处给出两个数，比不给数糟得多
+- 新闻一条都没有时，**首页那一整块不出现**（`v-if`），不留一张"暂无新闻"的空卡片；
+  但模块卡片照旧、且**不给数字**（不是"今日 0 条"）。这条与"今日消费的 `0` 要照实
+  显示成 `¥0.00`"看着像互相矛盾，其实判的是不同的问题：消费的 0 是"今天确实还没花钱"，
+  是个有意义的数字；新闻的 0 是"这台机器今天什么都没抓到"，属于后台状态，
+  摆到首页上只会让人以为功能坏了
+- 没有 `url` 的那条渲染成 `<span class="news-title is-plain">`（浅一档、无下划线），
+  **不是空 `href` 的 `<a>`** —— 后者点下去会跳到当前页，看着像点了没反应。
+  有 `url` 的才是链接，且一律 `target="_blank" rel="noopener noreferrer"`
 
 ### 启动前必须设置的环境变量
 
@@ -288,6 +371,17 @@
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | 默认 `localhost` / `3306` / `stfworkbench` |
 
 后端启动失败时先看是不是漏了 `JWT_SECRET`。前端开发时无需设置 —— 请求经 Vite 代理转发。
+
+**可选变量**（不设也能正常启动）：
+
+| 变量 | 说明 |
+|---|---|
+| `JUHE_NEWS_KEY` | 聚合数据（`v.juhe.cn`）的 appkey。**不设则跳过新闻抓取**、`/api/news` 返回空列表 —— 与 `JWT_SECRET` 缺了即启动失败刻意相反，理由见上面新闻那一节 |
+| `JUHE_NEWS_CRON` | 抓取周期，Spring cron 六段式（秒 分 时 日 月 周），默认 `0 7 * * * *`（每小时第 7 分钟）。**刻意避开整点** —— 整点是各家定时任务扎堆的时刻 |
+
+> 验证抓取链路时把 `JUHE_NEWS_CRON` 调成 `*/15 * * * * *` 之类，
+> 然后去看有没有 `scheduling-1` 线程上的日志。**别对着默认的每小时去等**，
+> 也别指望"没报错就是没跑" —— 未配 appkey 时那是一条 DEBUG，默认级别下根本看不见。
 
 > **改完后端要重启，别对着旧进程验证。** 现象是"新写的接口一律 500 / 404，
 > 日志里每条都落在兜底分支"，很容易误判成新代码写错了。
