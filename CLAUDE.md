@@ -9,10 +9,11 @@
 
 ## 当前状态
 
-**五条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
+**六条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
 生日纪念日（增删改查 + 首页提前提醒）、备忘录（分页 + 关键词搜索 + 详情）、
-每日消费（增删改查 + 区间/分类筛选 + 分类饼图 + 月度折线图）。
-首页由 `GET /api/dashboard` 一次聚合今日计划 + 临近生日 + 备忘条数 + 今日消费**
+每日消费（增删改查 + 区间/分类筛选 + 分类饼图 + 月度折线图）、
+课程表（学期 + 每周网格 + 周次导航 + 单双周 + 首页今日课程）。
+首页由 `GET /api/dashboard` 一次聚合今日计划 + 今日课程 + 临近生日 + 备忘条数 + 今日消费**
 （分支 `feature/auth-login`，尚未合并到 `main`）。
 
 后端：
@@ -48,6 +49,14 @@
   凡是声明了这两个字段的都必须带这个注解，漏一个就点名报出来
 - 未查到（含"存在但属于别人"）统一返回 **404 而非 403**：403 等于确认该 id 存在，
   而主键连续自增，这就成了存在性探测点
+- 全局异常处理器里**路径找不到、方法不对各有专门的出口**（404 `接口不存在` /
+  405 `该接口不支持这个请求方法`，且 405 带 `Allow` 响应头）。不接住它们，
+  两者都会落到兜底的 500 + 一条 ERROR 堆栈 —— 于是"前端把 URL 拼错了"看起来像后端崩了，
+  排查方向直接反了。加这两个 `@ExceptionHandler` 之前实测过一次：
+  `/api/nope` 与 `GET /api/semester/{id}` 都在 `run.log` 里各留了一条"未预期的异常"
+- body 里的 `code` **必须和 HTTP 状态码一致**（见 `ResultCode`）。第一版的
+  `handleMethodNotSupported` 回了 HTTP 405 而 body 里写着 `400`（复用了 `BAD_REQUEST`），
+  违反了本类开头的约定，所以补了 `METHOD_NOT_ALLOWED(405, ...)` 而不是将就
 - **业务意义上的"今天"一律用 `common/util/WorkbenchTime.today()`**，别在模块里各写一个
   `ZoneId.of("Asia/Shanghai")`。各处自己定义时，每个模块单看都对，跨模块却会漂 —— 这种
   不一致极难查，因为没有任何一处是"错"的
@@ -109,6 +118,25 @@
 - 汇总 SQL 用 `MONTH(expense_date)` 而不是 `DATE_FORMAT(..., '%Y-%m')`：
   年份已由入参定死，SQL 里没必要再拼一次前缀，顺带让这段 wrapper 不含任何字面量
   （引号、`%`），而 MyBatis-Plus 对传进 wrapper 的字符串是做注入检查的
+- **学期的 `startDate` 必须是第 1 周的周一**（`SemesterServiceImpl#requireMonday`）。
+  整张课表按 `startDate + (第 N 周 - 1) * 7 + (星期几 - 1)` 换算每一天的日期，
+  基准若不是周一，整个学期整体偏几天 —— 而它显示出来**仍然是一张看着完全正常的课表**。
+  只报错、**不替用户挪到最近的周一**：日期被悄悄改掉比报错难查得多
+- 跨表的两条"宁可让用户多操作一步"的规则都在 `SemesterServiceImpl`：
+  **有课程时不许删学期**，以及**改小 `totalWeeks` 时若有课的 `endWeek` 落到范围外就拒绝**
+  （提示里点名哪几门课）。第二条接口清单里原本没写，是照着第一条补的 ——
+  不挡的话，排在第 18 周的课既没被删、也不再显示在任何一格上，数据还在库里但从此看不见
+- **`CourseServiceImpl#requireOwnedSemester` 是本模块安全上最要紧的一处**：
+  租户插件管 `wb_course.user_id`，但管不到 `semester_id` 指向谁。少了它，
+  拿着别人的学期 id 就能把自己的课塞进别人的课表（`CourseIsolationTest#createRejectsAnotherUsersSemester` 钉的就是这条）
+- **`CourseServiceImpl#listOnDate` 用 `semesterMapper.selectList(null)` 取全部学期**，
+  再在 Java 里筛出包含今天的那一个 —— SQL 里**一个字都没有**，隔离全靠拦截器。
+  和 `AnniversaryServiceImpl#upcoming` / `MemoServiceImpl#count` 属于同一类
+  "看不见条件"的查询，所以单独有隔离用例
+- **`CourseTime` 是"哪些课算这一周"的唯一后端实现**（`occursOnWeek`），
+  前端 `types/course.ts` 里那份是它的镜像 —— 翻周是纯前端行为，
+  后端只有一个 `listOnDate` 管"今天"。两处判反的表现是"单周的课在第 4 周显示出来"，
+  界面不报错，只是那门课不该在。要改就两边一起改
 
 测试（`./mvnw test`，需先设 `DB_PASSWORD` 与 `JWT_SECRET`，因为要连真实 MySQL）：
 
@@ -163,6 +191,28 @@
   生日算错的表现很隐蔽 —— 界面不报错，只是安静地不提醒，所以闰年、当天、跨年这些
   边界逐个钉死，另加两条不变量式的用例扫一大片
 - `JacksonConfigTest` —— 无数据库，验证日期格式与 null 字段不被吞掉
+- `CourseTimeTest` —— 周次与单双周的**纯单元测试**（不连库）。它和 `YearlyRecurrenceTest`
+  是同一类：算错了界面上不会有任何提示，只是那门课安静地不出现在该在的格子里。
+  单双周按**学期第几周**判而不是按日期（`dayOfWeek` 与奇偶无关），
+  另有一条 `parityTable` 把第 1–6 周三种周类型的结果逐周写死，
+  改判法时它会把"哪一周变了"直接列出来
+- `SemesterIsolationTest` —— `wb_semester` 的隔离，外带两条**跨表**规则：
+  **有课程时不许删学期**（并断言提示里的门数，只说"还有课程"用户不知道该删几门）、
+  **改小 `totalWeeks` 时超范围的课会拦住这次修改**（断言里带课程名与它排到的周数）。
+  各配一条"合法时必须放行"的用例 —— 否则"永远拒绝"也能全绿。
+  另有 `deleteIsNotBlockedByAnotherUsersCourses`：别人学期里的课**不能**算在自己头上，
+  否则 A 删自己那个空学期会被 B 的课挡住，提示还说"还有 3 门课"，用户无从下手
+- `CourseIsolationTest` —— `wb_course` 的隔离，本模块特有的用例最多，因为
+  **`semester_id` 是一条租户插件管不到的越权通道**：拿着别人的学期 id 建课 / 把自己的课挪进去，
+  两条都钉了（前者断言"库里一行都不多"）。`listBySemester` / `listOnDate` 两条查询路径也各有一条，
+  后者正是首页 `todayCourses` 底下那个 `selectList(null)`
+- `CourseServiceTest` —— 课程的服务层用例，主线是**入参校验**（星期几 1–7、节次 1–6、
+  开始节次不晚于结束、周次落在学期范围内、周类型只能是 0/1/2）与**写路径的响应形状**
+  （`createReturnMatchesSubsequentRead`：新增返回的对象必须与随后查到的完全一致）。
+  `updateClearsTeacherAndLocation` 钉的是"清空要真的写进库" ——
+  MyBatis-Plus 默认跳过 null 字段，所以 `CourseServiceImpl#apply` 把可空的
+  老师 / 地点 `trimToEmpty` 成**空串**（PUT 是全量替换，留成 null 的话那条 SET 会整条消失，
+  界面上看着已清空、刷新一下旧值又回来了）
 
 前端：
 
@@ -207,6 +257,27 @@
 - 消费页保存后，**若这一笔落在当前筛选范围之外就重置筛选**并说明原因
   （"已保存；这一笔不在当前筛选范围内，已重置筛选"）。不重置的话，
   补录一笔上个月的账，界面看上去像没保存上 —— 而它其实已经写进库了
+- 课程表用 **CSS Grid**，靠显式 `grid-column` / `grid-row` 定位每一块课。
+  **第 1 列是时段带，7 个星期是第 2..8 列**；表头在第 1 行、节次行从第 2 行起。
+  写选择器或验证脚本时差 1 的表现是"每一列都匹配不上"，而不是"整体偏一列"，
+  很容易误判成布局没生效
+- 课程表保存后，**若这一周不在课程的周次范围内就跳到那门课的第一周**并说明原因
+  （"已保存；这门课从第 3 周开始，已跳到那一周"）。和消费页那条是同一个道理：
+  不跳的话，把一门课改成 3–4 周时正看着第 1 周，界面上什么都不会变，像没保存上
+- 周次与单双周的判断（`occursOnWeek`）在 `types/course.ts` 里是后端 `CourseTime` 的**镜像**。
+  翻周纯在前端做，后端只有一个 `listOnDate` 管"今天"，所以这份镜像省不掉 ——
+  但改判法时必须两边一起改
+- `sectionText` / `weekRangeText` 这类文案函数只有一处实现（`types/course.ts`），
+  课表格子、列表、首页今日课程都调它。各写一遍的话，同一门课在两处会显示成
+  "第 1-2 节" 和 "1-2 节"，没人会当成 bug 报上来
+- **列表页的写操作（`save` / `remove` / `init`）必须自己 `catch`**，哪怕只是 `catch {}`。
+  后端拒绝（400/404）时 axios 抛的是 rejection，不接住就冒成一条 `unhandled rejection`，
+  在浏览器里表现为一条来源不明的 [`pageerror`] —— 真正有用的那句提示已经在
+  `ElMessage` 里给过用户了，这条噪音只会把排查方向带偏
+- **`el-dialog__footer` 是 `text-align: right` 的行内布局**，往按钮上加
+  `margin-right: auto` **不管用**（auto 外边距只对块级/弹性项生效）。
+  要把"删除"单独推到最左边，得先用 `:deep(.el-dialog__footer) { display: flex }` 把它变成 flex。
+  它是 el-dialog 渲染的、不在本组件模板里，scoped 选择器够不到，必须 `:deep()`
 
 ### 启动前必须设置的环境变量
 
@@ -217,6 +288,14 @@
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | 默认 `localhost` / `3306` / `stfworkbench` |
 
 后端启动失败时先看是不是漏了 `JWT_SECRET`。前端开发时无需设置 —— 请求经 Vite 代理转发。
+
+> **改完后端要重启，别对着旧进程验证。** 现象是"新写的接口一律 500 / 404，
+> 日志里每条都落在兜底分支"，很容易误判成新代码写错了。
+> 这个坑踩过一次：`/api/semester` 明明刚写完，却一路报 500，
+> 查了半天才发现那个 JVM 是**课程模块之前**启动的，`GET /api/dashboard`
+> 连 `todayCourses` 这个 key 都没有。前端跑的浏览器脚本更是分不清
+> "后端没重启"和"后端有 bug"——它只会把差异报成界面问题。
+> 排查顺序固定为：先重启后端，再看日志，最后才怀疑代码。
 
 ## 常用命令
 
