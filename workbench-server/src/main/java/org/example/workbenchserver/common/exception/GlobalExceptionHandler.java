@@ -101,6 +101,16 @@ public class GlobalExceptionHandler {
 	 * （同上面 {@code MethodArgumentTypeMismatchException} 那条的理由）。
 	 *
 	 * <p>返回 404 而不是 400：找不到的是**资源**，这正是 404 的定义。
+	 *
+	 * <p><b>未登录时这里是够不着的</b>（已实测）：{@code /api/**} 上的 JWT 拦截器先跑，
+	 * 而未登录打 {@code /api/nope} 拿到的是 401。原因就在本方法接的异常类型上 ——
+	 * 不存在的路径会落到**静态资源处理器**（映射在 {@code /**}），那是个正常处理器，
+	 * 于是拦截器照常执行；{@code NoResourceFoundException} 是它找不到资源时才抛的。
+	 * 换句话说，这条路进得来，前提是请求已经过了拦截器（带上了有效 token）。
+	 *
+	 * <p>对比 {@link #handleMethodNotSupported}：那条**未登录也回 405** ——
+	 * 405 由查找处理器阶段抛出，跑在拦截器之前。同一个类里两条出口的可见性不同，
+	 * 差别只在抛出时机，不在 HTTP 语义。
 	 */
 	@ExceptionHandler(NoResourceFoundException.class)
 	public ResponseEntity<Result<Void>> handleNoResourceFound(NoResourceFoundException e) {
