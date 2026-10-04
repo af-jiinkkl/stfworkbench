@@ -1,5 +1,10 @@
 import { http } from '@/utils/request'
-import type { PlanTask, PlanTaskCreateParams, PlanTaskUpdateParams } from '@/types/plan'
+import type {
+  PlanTask,
+  PlanTaskCreateParams,
+  PlanTaskReorderParams,
+  PlanTaskUpdateParams,
+} from '@/types/plan'
 
 /**
  * 每日计划接口，对应 docs/接口清单.md §4。
@@ -25,9 +30,20 @@ export function createTask(data: PlanTaskCreateParams) {
   return http<PlanTask>({ url: '/plan-task', method: 'post', data })
 }
 
-/** 改内容 / 日期 / 排序。返回改后的完整任务对象 */
+/** 改内容 / 日期。**不含排序** —— 排序走下面的 reorderTasks。返回改后的完整任务对象 */
 export function updateTask(id: number, data: PlanTaskUpdateParams) {
   return http<PlanTask>({ url: `/plan-task/${id}`, method: 'put', data })
+}
+
+/**
+ * 重排当天的任务。返回重排后的完整列表。
+ *
+ * 用 PUT 而非 POST：提交的是"这一天的新顺序"这个整体状态，重复提交同样的内容
+ * 结果一样（幂等）。路径是字面量 `/order`，不会被 `PUT /{id}` 吃掉 ——
+ * Spring 匹配路径时字面量优先于模板。
+ */
+export function reorderTasks(data: PlanTaskReorderParams) {
+  return http<PlanTask[]>({ url: '/plan-task/order', method: 'put', data })
 }
 
 /**

@@ -1,8 +1,11 @@
 package org.example.workbenchserver.security;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import org.example.workbenchserver.common.exception.BusinessException;
 import org.example.workbenchserver.entity.PlanTask;
 import org.example.workbenchserver.mapper.PlanTaskMapper;
+import org.example.workbenchserver.service.PlanTaskService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +17,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * {@code wb_plan_task} 的数据隔离回归测试。
@@ -39,8 +43,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <h2>与其他测试的边界</h2>
  *
- * 前 5 个用例验证隔离，{@link #logicDeleteHidesRowFromOwnerToo} 验证的是
- * 逻辑删除本身（它即使拦截器失效也会通过，因为逻辑删除与租户插件无关）。
+ * 除 {@link #logicDeleteHidesRowFromOwnerToo} 之外，其余用例都验证隔离 ——
+ * 那一条验证的是逻辑删除本身（它即使拦截器失效也会通过，因为逻辑删除与租户插件无关）。
  *
  * <p>需要真实 MySQL，且 {@code wb_plan_task} 表已由 {@code db/schema.sql} 建好。
  * 跑之前设置环境变量 {@code DB_PASSWORD} 与 {@code JWT_SECRET}。
@@ -57,6 +61,9 @@ class PlanTaskIsolationTest {
 
 	@Autowired
 	private PlanTaskMapper planTaskMapper;
+
+	@Autowired
+	private PlanTaskService planTaskService;
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
@@ -91,6 +98,12 @@ class PlanTaskIsolationTest {
 	private String rawContentOf(Long id) {
 		return jdbcTemplate.queryForObject(
 				"SELECT `content` FROM `wb_plan_task` WHERE `id` = ?", String.class, id);
+	}
+
+	/** 同上，读的是排序值 —— 重排这条路径改的正是它 */
+	private Integer rawSortOrderOf(Long id) {
+		return jdbcTemplate.queryForObject(
+				"SELECT `sort_order` FROM `wb_plan_task` WHERE `id` = ?", Integer.class, id);
 	}
 
 	private List<PlanTask> queryTestDate() {
@@ -188,6 +201,49 @@ class PlanTaskIsolationTest {
 		assertThat(jdbcTemplate.queryForObject(
 				"SELECT `deleted` FROM `wb_plan_task` WHERE `id` = ?", Long.class, id))
 				.isNotZero();
+	}
+
+	/**
+	 * {@code reorder} 写回用的是 {@code update(null, wrapper)} 这种形状，
+	 * 与上面 {@link #updateCannotModifyAnotherUsersRow} 的 {@code updateById} 不是同一条语句。
+	 *
+	 * <p>单独钉一次是有必要的：上面的用例只覆盖了"带实体"的写法，
+	 * 而 {@code LambdaUpdateWrapper} 走的是另一条 SQL 拼装分支 ——
+	 * 租户插件若只给其中一条补 {@code user_id}，另一条就是一条静默的越权通道。
+	 */
+	@Test
+	void updateWrapperCannotModifyAnotherUsersRow() {
+		Long idOwnedByA = seed(USER_A, "a-1");
+
+		UserContext.set(USER_B);
+		int affected = planTaskMapper.update(null, new LambdaUpdateWrapper<PlanTask>()
+				.eq(PlanTask::getId, idOwnedByA)
+				.set(PlanTask::getSortOrder, 99));
+
+		assertThat(affected).isZero();
+		assertThat(rawSortOrderOf(idOwnedByA)).isZero();
+	}
+
+	/**
+	 * 重排是全量接口：它**不是**按 id 查一条，而是拿一组 id 去写。
+	 *
+	 * <p>这是本模块最容易出隔离问题的地方 —— 攻击面不是"猜一个别人的 id 去查"，
+	 * 而是"把别人的 id 混进自己提交的顺序里"。
+	 */
+	@Test
+	void reorderCannotTouchAnotherUsersRow() {
+		Long idOwnedByA = seed(USER_A, "a-1");
+		Long idOwnedByB = seed(USER_B, "b-1");
+
+		// B 提交自己的顺序，末尾捎上 A 的任务 —— 全量接口最典型的越权尝试
+		UserContext.set(USER_B);
+		assertThatThrownBy(() -> planTaskService.reorder(TEST_DATE, List.of(idOwnedByB, idOwnedByA)))
+				.isInstanceOf(BusinessException.class);
+
+		// 只断"抛了异常"不够：一个"先按提交的 id 逐条写、写完才发现集合对不上"的实现
+		// 同样会抛，但 A 那行已经被改过了。所以必须回查库
+		assertThat(rawSortOrderOf(idOwnedByA)).isZero();
+		assertThat(rawContentOf(idOwnedByA)).isEqualTo("a-1");
 	}
 
 }

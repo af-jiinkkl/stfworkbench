@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Delete, EditPen, Plus } from '@element-plus/icons-vue'
+import Sortable from 'sortablejs'
 import * as planApi from '@/api/planApi'
 import type { PlanTask } from '@/types/plan'
 import { addDays, addMonths, today } from '@/utils/date'
@@ -69,8 +70,10 @@ async function add(): Promise<void> {
   adding.value = true
   try {
     const created = await planApi.createTask({ planDate: date.value, content })
-    // 后端返回的 sortOrder 是 0，与既有任务同值，按 id 排正好落在末尾，
-    // 所以直接 push 与再次拉取的顺序一致
+    // 后端的 sortOrder 取当天最大值 + 1，所以新任务必然在末尾 ——
+    // 直接 push 与再次拉取的顺序一致。
+    // （早先靠的是"后端返回 0、同值之间按 id 排"，那要求当天排序值全是 0；
+    //   有了拖动排序之后这个前提不成立，改由后端显式取 max+1）
     tasks.value.push(created)
     newContent.value = ''
   }
@@ -191,6 +194,103 @@ async function saveEdit(task: PlanTask): Promise<void> {
 
   editingId.value = null
 }
+
+// ---------- 拖动排序 ----------
+
+/** 长按多久才起拖。桌面端鼠标也走长按，两端手势一致，不必记两套 */
+const DRAG_DELAY_MS = 400
+
+/** 手指挪出几个像素就判为纵向滚动、不起拖 —— 不然窄屏下划不动列表 */
+const DRAG_TOUCH_THRESHOLD = 4
+
+const listRef = ref<HTMLElement | null>(null)
+
+let sortable: Sortable | null = null
+
+/** 松手后把新顺序存回后端。`taskIds` 已按界面上的新顺序排好 */
+async function persistOrder(taskIds: number[]): Promise<void> {
+  try {
+    // 用服务端返回的列表覆盖本地：它才是权威顺序，顺带验掉"到底写进去没有"
+    tasks.value = await planApi.reorderTasks({ planDate: date.value, taskIds })
+  }
+  catch {
+    // 拦截器弹过提示了（比如"任务列表已变化，请刷新后重试"）。
+    // 把顺序拉回服务端的真实状态 —— 不拉的话界面停在"没存进去的那个顺序"上，
+    // 刷新一次就变回去了，用户以为拖坏了
+    await loadDay()
+  }
+}
+
+/**
+ * 建立 / 重建拖拽实例。
+ *
+ * **必须 watch 而不是 onMounted**：`<ul>` 挂在 `v-if="tasks.length"` 上，
+ * 空列表时那个元素根本不存在。只在挂载时初始化一次的话，用户从空列表开始
+ * 加第一条，Sortable 是失效的 —— 而且不报错，只是拖不动，这种最难查。
+ */
+function syncSortable(el: HTMLElement | null): void {
+  sortable?.destroy()
+  sortable = null
+  if (!el) {
+    return
+  }
+
+  sortable = Sortable.create(el, {
+    animation: 150,
+    delay: DRAG_DELAY_MS,
+    // 鼠标也走"按住 400ms"才起拖：两端口径一致
+    delayOnTouchOnly: false,
+    // 手指挪出 4px 即判为滚动，不跟纵向滚动抢手势
+    touchStartThreshold: DRAG_TOUCH_THRESHOLD,
+    // 这几个可点区必须先排除，否则点"删除"会先起拖。
+    // 匹配是从事件目标往上找最近的祖先，所以写在方框里的 .el-checkbox__inner
+    // 也会被这一条接住，不必再单列
+    filter: '.el-checkbox, .task-actions, .task-edit',
+    // 默认 true 会连过滤元素的默认行为一起 preventDefault，那样勾选框点不动
+    preventOnFilter: false,
+    // 编辑态整行是输入框，拖它没有意义（进出编辑态时的切换见下面的 watch）
+    disabled: editingId.value !== null,
+    ghostClass: 'task-ghost',
+    chosenClass: 'task-chosen',
+
+    /**
+     * 这里**不**去读 `listRef.value.children`，而是用事件给的
+     * `oldIndex` / `newIndex` 直接在 `tasks` 上搬一次。
+     *
+     * 两个原因：其一，触摸端 Sortable 会往 `<ul>` 里塞一个跟着手指走的克隆节点，
+     * 读 children 得先分辨它是谁；其二，那样就得赌"清理 DOM"发生在 onEnd 之前还是之后。
+     * `tasks` 的顺序与 `<ul>` 的子元素顺序始终一一对应，下标直接可用。
+     */
+    onEnd(evt) {
+      const { oldIndex, newIndex } = evt
+      // 原地松手（下标没变）不必发请求 —— 那只是长按了一下
+      if (oldIndex === undefined || newIndex === undefined || oldIndex === newIndex) {
+        return
+      }
+
+      const next = [...tasks.value]
+      const [moved] = next.splice(oldIndex, 1)
+      if (!moved) {
+        return
+      }
+      next.splice(newIndex, 0, moved)
+      tasks.value = next
+
+      // 必须先把内存数组按新顺序对齐：Sortable 改的是**真实 DOM**，
+      // Vue 的 vdom 还记着旧顺序，两边不一致时一旦有别的更新触发重渲染，
+      // 列表会弹回拖动前的位置。这不是乐观更新的取舍，是必须对齐
+      void persistOrder(next.map((task) => task.id))
+    },
+  })
+}
+
+watch(listRef, syncSortable, { flush: 'post' })
+
+// 进编辑态就停掉拖动：那一行整行是个输入框，而且长按会和"双击进编辑"抢手势。
+// option 是就地改属性，不必整个销毁重建。
+watch(editingId, (id) => {
+  sortable?.option('disabled', id !== null)
+})
 
 // ---------- 回顾 ----------
 const range = ref<[string, string]>([addDays(todayStr, -29), todayStr])
@@ -342,11 +442,13 @@ onMounted(loadDay)
 
         <ul
           v-if="tasks.length"
+          ref="listRef"
           class="task-list"
         >
           <li
             v-for="task in tasks"
             :key="task.id"
+            :data-id="task.id"
             class="task"
             :class="{ 'is-done': task.completed === 1 }"
           >
@@ -581,6 +683,22 @@ onMounted(loadDay)
   .task-actions {
     opacity: 1;
   }
+}
+
+/* ---------- 拖动排序 ---------- */
+/* Sortable 把这两个类名钩子加在**列表里那个 li 自己**身上 —— 触摸端另有一个
+   跟手的克隆节点，它带的是 .task-fallback / .task-drag，沿用 .task 的样式即可：
+   - .task-ghost：松手会落到这儿的占位条
+   - .task-chosen：刚按住、还没挪动的那一瞬
+   底色必须显式给：这一行挪出原位置之后，不给底色会把下面的行透出来。 */
+.task-ghost {
+  background-color: var(--wb-primary-soft);
+  border-radius: var(--wb-radius-sm);
+}
+
+.task-chosen {
+  background-color: var(--wb-surface-hover);
+  border-radius: var(--wb-radius-sm);
 }
 
 /* ---------- 回顾 ---------- */

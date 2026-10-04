@@ -13,10 +13,14 @@ import org.example.workbenchserver.mapper.PlanTaskMapper;
 import org.example.workbenchserver.service.PlanTaskService;
 import org.example.workbenchserver.vo.PlanTaskVO;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 每日计划业务实现。
@@ -87,7 +91,7 @@ public class PlanTaskServiceImpl implements PlanTaskService {
 		task.setContent(dto.content().trim());
 		task.setCompleted(0);
 		task.setCompletedTime(null);
-		task.setSortOrder(dto.sortOrder() != null ? dto.sortOrder() : 0);
+		task.setSortOrder(dto.sortOrder() != null ? dto.sortOrder() : nextSortOrder(dto.planDate()));
 
 		planTaskMapper.insert(task);
 
@@ -105,13 +109,53 @@ public class PlanTaskServiceImpl implements PlanTaskService {
 		if (dto.planDate() != null) {
 			task.setPlanDate(dto.planDate());
 		}
-		if (dto.sortOrder() != null) {
-			task.setSortOrder(dto.sortOrder());
-		}
 		// completed / completedTime 不在这里改：它们归 updateCompleted 管
+		// sortOrder 也不在这里改：排序归 reorder 管（见 PlanTaskUpdateDTO 的类注释）
 
 		planTaskMapper.updateById(task);
 		return PlanTaskVO.from(task);
+	}
+
+	/**
+	 * 按 {@code taskIds} 给出的顺序重排当天的任务。
+	 *
+	 * <p><b>为什么要求 {@code taskIds} 是当天的完整集合</b>：少传的那几条会保留原值、
+	 * 可能会插在中间，于是用户在界面上拖出一个顺序、库里存的是另一个 —— 而且不报错。
+	 * 这与 {@code SemesterServiceImpl} 里"改小 {@code totalWeeks} 时有课落到范围外就拒绝"
+	 * 是同一种取舍：**宁可让用户刷新一次，也不要静默给出一个错的顺序**。
+	 *
+	 * <p><b>为什么逐条 update 而不是一条 {@code CASE WHEN}</b>：仓库没有批量更新的先例，
+	 * 而一天的条数是个位到两位数，循环写在事务里最直白；{@code CASE WHEN} 得靠
+	 * {@code setSql} 拼字符串，反而把注入面打开了。
+	 */
+	@Override
+	@Transactional
+	public List<PlanTaskVO> reorder(LocalDate planDate, List<Long> taskIds) {
+		if (planDate == null || taskIds == null || taskIds.isEmpty()) {
+			throw new BusinessException(ResultCode.BAD_REQUEST, "planDate 与 taskIds 不能为空");
+		}
+
+		List<PlanTask> tasks = planTaskMapper.selectList(new LambdaQueryWrapper<PlanTask>()
+				.eq(PlanTask::getPlanDate, planDate));
+
+		// 集合一致 + 个数一致：后者顺带把"有重复"挡掉（去重后会比原列表短）
+		Set<Long> current = tasks.stream().map(PlanTask::getId).collect(Collectors.toSet());
+		Set<Long> submitted = new HashSet<>(taskIds);
+		if (submitted.size() != taskIds.size() || !current.equals(submitted)) {
+			// 消息刻意笼统：别人的 id、不存在的 id、已删除的 id 走到这里都是同一句话，
+			// 所以它不泄露任何一条是否存在（同 requireOwned 那条 404 的理由）
+			throw new BusinessException(ResultCode.BAD_REQUEST, "任务列表已变化，请刷新后重试");
+		}
+
+		for (int i = 0; i < taskIds.size(); i++) {
+			planTaskMapper.update(null, new LambdaUpdateWrapper<PlanTask>()
+					.eq(PlanTask::getId, taskIds.get(i))
+					.set(PlanTask::getSortOrder, i));
+		}
+
+		// 回读再返回：仓库规矩是写接口必须回读一次，避免返回一份与库里对不上的数据。
+		// 这里就地按新顺序拼 VO 也能得到一样的结果，但回读能顺带验掉"到底写进去了没有"
+		return listByDate(planDate);
 	}
 
 	@Override
@@ -144,6 +188,26 @@ public class PlanTaskServiceImpl implements PlanTaskService {
 		// 这一步是为了区分"删了"和"本来就没有"，不是为了安全。
 		requireOwned(id);
 		planTaskMapper.deleteById(id);
+	}
+
+	/**
+	 * 当天已有任务的最大排序值 + 1，用来把新建的任务放到末尾（当天没有任务则是 0）。
+	 *
+	 * <p>早先这里是写死的 {@code 0}，靠"同值再按 id 升序"才等效于"追加到末尾" ——
+	 * 那要求当天所有任务的 {@code sortOrder} 全是 0。手工拖动排序一旦把它改成
+	 * 0/1/2…，这个前提就没了：新任务带着 0 进来，会与原先那条 0 并列，
+	 * 只因为 id 更大而排到**第 2 位**，不是末尾。
+	 *
+	 * <p>取最大值在 Java 里做、不在 SQL 里做：条件里不拼任何字面量，
+	 * 用户条件仍由拦截器注入，与 {@code listByDate} 是同一个 wrapper 形状。
+	 */
+	private int nextSortOrder(LocalDate planDate) {
+		return planTaskMapper.selectList(new LambdaQueryWrapper<PlanTask>()
+						.eq(PlanTask::getPlanDate, planDate))
+				.stream()
+				.mapToInt(task -> task.getSortOrder() == null ? 0 : task.getSortOrder())
+				.max()
+				.orElse(-1) + 1;
 	}
 
 	/**

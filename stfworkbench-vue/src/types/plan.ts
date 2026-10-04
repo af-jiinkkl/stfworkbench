@@ -22,13 +22,25 @@ export interface PlanTaskCreateParams {
   /** yyyy-MM-dd */
   planDate: string
   content: string
-  /** 省略时后端按 0 处理，同值之间按 id 排，效果即"追加到末尾" */
+  /**
+   * 一般省略。省略时后端取当天最大值 + 1，也就是追加到末尾。
+   * 界面上新增不传它 —— 传了就等于绕过"一个写入口"的约定。
+   */
   sortOrder?: number
 }
 
-/** 修改任务。completed 不在这里 —— 它走独立的 PATCH 接口 */
+/** 修改任务。completed 不在这里（走独立的 PATCH），sortOrder 也不在（走 /order） */
 export interface PlanTaskUpdateParams {
   content: string
   planDate?: string
-  sortOrder?: number
+}
+
+/**
+ * 重排入参。`taskIds` 必须是当天任务的**完整**顺序 ——
+ * 少传、多传、有重复后端一律 400（见 docs/接口清单.md §4）。
+ */
+export interface PlanTaskReorderParams {
+  /** yyyy-MM-dd */
+  planDate: string
+  taskIds: number[]
 }
