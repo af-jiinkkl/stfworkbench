@@ -34,8 +34,19 @@ public interface PlanTaskService {
 
 	PlanTaskVO create(PlanTaskCreateDTO dto);
 
-	/** 改内容 / 日期 / 排序，但不碰完成状态（后者有自己的 PATCH 接口） */
+	/**
+	 * 改内容 / 日期，但不碰完成状态（有自己的 PATCH 接口）与排序
+	 * （有自己的 {@link #reorder}）。
+	 */
 	PlanTaskVO update(Long id, PlanTaskUpdateDTO dto);
+
+	/**
+	 * 按 {@code taskIds} 给出的顺序重排当天的任务，返回重排后的完整列表。
+	 *
+	 * <p>{@code taskIds} 必须是当天任务的**完整**集合（顺序为新顺序）。
+	 * 少传、多传、有重复都一律 400 —— 理由见 {@code PlanTaskServiceImpl#reorder}。
+	 */
+	List<PlanTaskVO> reorder(LocalDate planDate, List<Long> taskIds);
 
 	/** 切换完成状态，并同步维护 {@code completedTime} */
 	PlanTaskVO updateCompleted(Long id, PlanTaskCompletedDTO dto);

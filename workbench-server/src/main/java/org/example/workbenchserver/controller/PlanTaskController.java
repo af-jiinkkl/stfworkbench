@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import org.example.workbenchserver.common.result.Result;
 import org.example.workbenchserver.dto.PlanTaskCompletedDTO;
 import org.example.workbenchserver.dto.PlanTaskCreateDTO;
+import org.example.workbenchserver.dto.PlanTaskOrderDTO;
 import org.example.workbenchserver.dto.PlanTaskUpdateDTO;
 import org.example.workbenchserver.service.PlanTaskService;
 import org.example.workbenchserver.vo.PlanTaskVO;
@@ -66,6 +67,21 @@ public class PlanTaskController {
 	@PutMapping("/{id}")
 	public Result<PlanTaskVO> update(@PathVariable Long id, @Valid @RequestBody PlanTaskUpdateDTO dto) {
 		return Result.success(planTaskService.update(id, dto));
+	}
+
+	/**
+	 * 重排当天的任务：提交当天的完整 id 列表，按新顺序排列。
+	 *
+	 * <p>不逐条走 {@code PUT /{id}} —— 那条的 {@code content} 是必填，
+	 * 为了改个顺序得把正文原样传回来，而且拖一次要发 N 个请求、没有原子性。
+	 *
+	 * <p>路径是字面量 {@code /order}，与上面的模板 {@code /{id}} 不冲突：
+	 * Spring 匹配路径时字面量优先于模板，所以 {@code /api/plan-task/order}
+	 * 不会被当成 {@code id=order}。
+	 */
+	@PutMapping("/order")
+	public Result<List<PlanTaskVO>> reorder(@Valid @RequestBody PlanTaskOrderDTO dto) {
+		return Result.success(planTaskService.reorder(dto.planDate(), dto.taskIds()));
 	}
 
 	/**

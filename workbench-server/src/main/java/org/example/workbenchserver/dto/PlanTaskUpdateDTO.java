@@ -14,7 +14,13 @@ import java.time.LocalDate;
  * 勾选是高频的、点一下就发。混在同一个接口里，编辑时的一次保存就可能
  * 顺手把完成状态覆盖掉。
  *
- * <p>{@code planDate} 与 {@code sortOrder} 可省略，省略即保持原值。
+ * <p><b>为什么这里也没有 {@code sortOrder}？</b>
+ * 同样是为了"一件事只有一个入口"：排序有独立的 {@code PUT /api/plan-task/order}，
+ * 收的是当天的**完整顺序**。若这里也能改单条的排序值，同一个字段就有了两条写路径，
+ * 后者还要求把正文一起原样传回来 —— 两条路径对"什么算一个合法的顺序"判断不同，
+ * 将来只给一侧加了约束，两边给出的顺序就会不一样。
+ *
+ * <p>{@code planDate} 可省略，省略即保持原值。
  */
 public record PlanTaskUpdateDTO(
 
@@ -22,8 +28,6 @@ public record PlanTaskUpdateDTO(
 		@Size(max = 255, message = "长度不能超过 255 个字符")
 		String content,
 
-		LocalDate planDate,
-
-		Integer sortOrder) {
+		LocalDate planDate) {
 
 }

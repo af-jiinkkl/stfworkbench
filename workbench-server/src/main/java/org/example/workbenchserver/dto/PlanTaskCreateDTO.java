@@ -24,7 +24,13 @@ public record PlanTaskCreateDTO(
 		@Size(max = 255, message = "长度不能超过 255 个字符")
 		String content,
 
-		/** 排序值，可省略。省略时为 0，同值之间按 id 排，效果就是"追加到末尾" */
+		/**
+		 * 排序值，一般省略。省略时取当天最大值 + 1，也就是追加到末尾
+		 * （见 {@code PlanTaskServiceImpl#nextSortOrder}）。
+		 *
+		 * <p>保留这个入参只是为了支持"插入到指定位置"这类批量导入场景；
+		 * 界面上的新增与拖动排序都不传它。
+		 */
 		Integer sortOrder) {
 
 }
