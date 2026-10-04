@@ -9,7 +9,7 @@
 
 ## 当前状态
 
-**七条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
+**七条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 拖动排序 + 回顾）、
 生日纪念日（增删改查 + 首页提前提醒）、备忘录（分页 + 关键词搜索 + 详情）、
 每日消费（增删改查 + 区间/分类筛选 + 分类饼图 + 月度折线图）、
 课程表（学期 + 每周网格 + 周次导航 + 单双周 + 首页今日课程）、
@@ -61,6 +61,19 @@
 - **清空字段必须用 `LambdaUpdateWrapper` 显式 `.set(..., null)`**，不能用 `updateById`。
   MyBatis-Plus 默认字段更新策略是 `NOT_NULL`，null 字段会被**跳过**而非写进 SQL ——
   每日计划取消勾选时 `completed_time` 正是靠这一点才能清回 null
+- **每日计划的排序只有一个写入口 `PUT /api/plan-task/order`**，`PUT /{id}` 的入参里
+  刻意**没有** `sortOrder`。它收的是当天的**完整** id 列表（顺序即新顺序），
+  少传 / 多传 / 有重复一律 400 —— 少传的几条会保留原值插在中间，得到一个用户没预期的
+  顺序却不报错，与 `SemesterServiceImpl` 里"改小 `totalWeeks` 时有课落到范围外就拒绝"
+  是同一种取舍：**宁可让用户刷新一次，也不要静默给出一个错的顺序**。
+  400 的消息刻意笼统（"任务列表已变化，请刷新后重试"），别人的 id / 不存在的 id
+  走到这里都是同一句话，不泄露任何一条是否存在。路径 `order` 是字面量，
+  不会被 `PUT /{id}` 吃掉 —— Spring 匹配时字面量优先于模板
+- **新建任务的 `sortOrder` 取当天的 `max + 1`**（`PlanTaskServiceImpl#nextSortOrder`），
+  不是写死 `0`。写死 `0` 的年代靠"同值之间再按 id 升序"才**碰巧**等价于"追加到末尾"，
+  前提是当天排序值全是 0；拖动排序一旦把它改成 0/1/2…，新任务就会落到**第 2 位**。
+  这类"靠两个字段的巧合凑出正确行为"的写法，加一个会改其中之一的特性就会垮，
+  而垮的时候不报错
 - **`createTime` / `updateTime` 一律要带
   `@TableField(updateStrategy = FieldStrategy.NEVER)`**（凡声明了这两个字段的实体一律要有；
   八个实体里只有 `News` 没有 `updateTime`，因为那张缓存表没有任何 UPDATE 路径）。
@@ -224,7 +237,13 @@
 - `PlanTaskIsolationTest` —— 同一件事，但验的是**真实实体与 Mapper 接上拦截器之后**
   是否也有效（探针表证明机制可用，它证明本模块确实用上了）。数据用原生 `JdbcTemplate`
   带显式 `user_id` 种入，绕开 MyBatis —— 若改用 Mapper 插，拦截器一失效就会在**插入**
-  阶段抛 NOT NULL，测试红了却红在错误位置，读改写删的越权断言根本没跑过
+  阶段抛 NOT NULL，测试红了却红在错误位置，读改写删的越权断言根本没跑过。
+  拖动排序之后另加了两条：`updateWrapperCannotModifyAnotherUsersRow` 钉的是
+  `update(null, wrapper)` 这个形状（重排写回用的就是它，与 `updateById` **不是同一条
+  SQL 拼装分支**，只覆盖其中一条就是一条静默的越权通道）；`reorderCannotTouchAnotherUsersRow`
+  钉的是全量接口特有的攻击面 —— 不是"猜别人的 id 去查"，而是"把别人的 id 混进提交的顺序里"。
+  后者**只断异常不够**：一个"先按提交的 id 逐条写、写完才发现集合对不上"的实现同样会抛，
+  所以必须回查库里对方的 `sort_order` 有没有动
 - `AnniversaryIsolationTest` —— 同 `PlanTaskIsolationTest`，另加一条本模块特有的用例。
   `upcoming` 是"把当前用户的全部记录取出来、再在 Java 里筛"，SQL 里**没有任何 WHERE**，
   隔离全靠拦截器，所以这条路径值得单独钉。验证方式：把表加进 `TABLES_WITHOUT_USER_ID`
@@ -236,6 +255,12 @@
   另加两条本模块特有的：**两个汇总接口只统计自己的记录**（它们各自是一条
   `GROUP BY`，条件里没有 `user_id`，隔离全靠拦截器），以及**已逻辑删除的记录不计入汇总**
   —— 汇总走的是 `selectMaps`，不经过实体，逻辑删除是否被拼进去要单独确认
+- `PlanTaskServiceTest` —— 每日计划的服务层用例，主线是**排序**（`PlanTaskIsolationTest`
+  验的是"别人的碰不到"，它验的是"自己的排得对不对"）。三条：重排按下标写回 `0..n-1`
+  且**要回查库**（只看返回值的话，"只在内存里排了排、压根没写回"的实现照样全绿）；
+  `taskIds` 与当天集合对不上（少 / 多 / 重复）一律 400 且**一条都不改**；
+  以及 `createAppendsToEndAfterReorder` —— 它钉的正是本次修掉的缺陷，
+  重排之后再新增必须落在末尾而不是第 2 位
 - `MemoServiceTest` —— 第一个**服务层**用例，验的是写接口的**响应形状**而不是隔离：
   POST / PUT 返回的 `createTime` / `updateTime` 必须非空且格式正确。
   这个 bug 上过线：数据库的 `DEFAULT CURRENT_TIMESTAMP` 填了值，
@@ -322,6 +347,27 @@
   自己带 `@DateTimeFormat(iso = ISO.DATE)`，`JacksonConfig` 覆盖不到 MVC 这一层
 - 触屏/悬停之外的交互：`PlanView.vue` 里行内编辑用双击或铅笔图标进入，Enter 保存、
   Esc 取消。取消靠 `editingId` 置空挡掉随后那次 blur，否则"取消"会把改动存进去
+- **每日计划的拖动排序用 sortablejs**（全仓库唯一的拖拽库，只为这一处引入）。
+  它有几个反直觉的坑，都是"不报错、只是不工作"那一类：
+  - **实例必须 `watch(listRef, ...)` 建，不能 `onMounted`** —— `<ul>` 挂在
+    `v-if="tasks.length"` 上，空列表时那个元素根本不存在。挂载时初始化一次的话，
+    用户从空列表开始加第一条，Sortable 是失效的，拖不动也不报错
+  - **`filter` 必须排除 `.el-checkbox` / `.task-actions` / `.task-edit`**，否则点"删除"
+    会先起拖。它按"从事件目标往上找最近的祖先"匹配，所以 `.el-checkbox__inner`
+    也被第一条接住，不必再单列
+  - **`preventOnFilter` 要显式写 `false`**（默认是 `true`）：默认值会把过滤元素的
+    默认行为一并 `preventDefault`，后果是勾选框点不动
+  - **长按是 `delay: 400` + `delayOnTouchOnly: false`**，桌面端鼠标也走长按 ——
+    两端手势一致，且"按住 400ms"天然与"双击进编辑"错开
+  - **`touchStartThreshold: 4`** 让手指挪几像素就判为纵向滚动，不跟滚动抢手势
+  - **`onEnd` 里必须先按新顺序重排 `tasks` 数组**：Sortable 改的是**真实 DOM**，
+    Vue 的 vdom 还记着旧顺序，两边不一致时一旦有别的更新触发重渲染，列表会弹回去。
+    顺序**从 `evt.oldIndex` / `newIndex` 推**，不要去读 `listRef.children` ——
+    触摸端 Sortable 会往 `<ul>` 里塞一个跟手的克隆节点，读 children 得先分辨它是谁
+  - 进编辑态时用 `sortable.option('disabled', true)` 就地关掉，不必销毁重建
+- **首页「今日计划」不要为顺序做任何事**：它复用 `GET /api/dashboard` 的
+  `todayPlan.tasks`，与 `GET /api/plan-task` 同源同序，后端顺序一变它自动跟着变。
+  在首页再排一遍就又有了两个口径
 - **`el-select` 放进 flex 行里会被压成一个箭头宽**，选中值随即被裁掉，看上去像没选上。
   得给那个 `el-form-item` 加 `flex: 1`（见 `AnniversaryView.vue` 的 `.date-row`）。
   直接放在 `el-form-item` 下的 select 不受影响，所以这个问题只在并排的日期选择器上冒出来
