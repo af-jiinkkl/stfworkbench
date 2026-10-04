@@ -41,6 +41,10 @@ async function loadDay(): Promise<void> {
   try {
     tasks.value = await planApi.listByDate(date.value)
   }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection ——
+    // 下面两个调用点（onMounted、onDateChange）都没人接这个 promise
+  }
   finally {
     loading.value = false
   }
@@ -53,7 +57,7 @@ function goToday(): void {
 // 日期一改就重新拉。用 @change 而不是 watch(date)：用户连续翻日历时会触发
 // 多次请求，@change 只在选定后触发一次。
 function onDateChange(): void {
-  loadDay()
+  void loadDay()
 }
 
 async function add(): Promise<void> {
@@ -69,6 +73,10 @@ async function add(): Promise<void> {
     // 所以直接 push 与再次拉取的顺序一致
     tasks.value.push(created)
     newContent.value = ''
+  }
+  catch {
+    // 拦截器弹过提示了。**留着输入框里的内容**，用户改完能直接重试 ——
+    // 清空是写在 try 里成功路径上的，失败时不该走到
   }
   finally {
     adding.value = false
@@ -108,7 +116,15 @@ async function remove(task: PlanTask): Promise<void> {
     return
   }
 
-  await planApi.removeTask(task.id)
+  try {
+    await planApi.removeTask(task.id)
+  }
+  catch {
+    // 同 saveEdit：拦截器弹过提示，接住是为了不冒成 unhandled rejection。
+    // 直接返回 —— 本地那条不能先删掉，否则界面显示已删、刷新一下它又回来了
+    return
+  }
+
   tasks.value = tasks.value.filter((item) => item.id !== task.id)
   ElMessage.success('已删除')
 }
@@ -158,12 +174,21 @@ async function saveEdit(task: PlanTask): Promise<void> {
     return
   }
 
-  const updated = await planApi.updateTask(task.id, { content })
-  const index = tasks.value.findIndex((item) => item.id === task.id)
-  if (index >= 0) {
-    // 就地替换而不是整表重拉：重拉会让列表滚动位置和正在编辑的状态一起丢掉
-    tasks.value[index] = updated
+  try {
+    const updated = await planApi.updateTask(task.id, { content })
+    const index = tasks.value.findIndex((item) => item.id === task.id)
+    if (index >= 0) {
+      // 就地替换而不是整表重拉：重拉会让列表滚动位置和正在编辑的状态一起丢掉
+      tasks.value[index] = updated
+    }
   }
+  catch {
+    // 拦截器弹过提示了。**留在编辑态**让用户改完重试。
+    // 这里若照常往下把 editingId 清掉，那一行会显示回旧内容 ——
+    // 看上去像"保存成功了但没生效"，是最难查的那种表现
+    return
+  }
+
   editingId.value = null
 }
 
@@ -191,6 +216,10 @@ async function loadReview(): Promise<void> {
   reviewLoading.value = true
   try {
     reviewTasks.value = await planApi.listByRange(range.value[0], range.value[1])
+  }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection ——
+    // 两个调用点（onRangeChange、切到回顾模式的 watch）交出去的 promise 都没人接
   }
   finally {
     reviewLoading.value = false
@@ -244,13 +273,13 @@ onMounted(loadDay)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           每日计划
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           今天要做的事，做完打个勾。
         </p>
       </div>
@@ -440,31 +469,8 @@ onMounted(loadDay)
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 .toolbar {
   display: flex;
@@ -567,6 +573,16 @@ onMounted(loadDay)
   opacity: 1;
 }
 
+/* 触屏没有 hover：上面那条永远不会生效，而 opacity: 0 的元素**仍然占位、仍然可点** ——
+   用户看不到按钮，却能在那个空位置上误触到"删除"。所以触屏下一律显形。
+   判据用 `hover: none`（输入方式）而不是屏幕宽度：1440px 宽的触摸屏笔记本同样没有
+   悬停，而手机外接鼠标是有的。同理见 AnniversaryView / MemoView / ExpenseView 三处。 */
+@media (hover: none) {
+  .task-actions {
+    opacity: 1;
+  }
+}
+
 /* ---------- 回顾 ---------- */
 .day-group {
   padding: 16px 20px;
@@ -598,6 +614,9 @@ onMounted(loadDay)
   padding: 4px 0;
 }
 
+/* 方框 16px、里面的勾 13px，两个数都**故意**不接字号阶。
+   内容区只有 16 − 2（边框）= 14px，而 --wb-text-sm 已经是 15px ——
+   把 13px 换成那个 token，勾会溢出方框。改这里时两个数要一起算。 */
 .task-mark {
   display: grid;
   place-items: center;
@@ -625,5 +644,28 @@ onMounted(loadDay)
   font-size: var(--wb-text-sm);
   color: var(--wb-text-muted);
   text-align: center;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 两条工具栏：按天是"日期 + 回到今天"，回顾是"日期区间 + 最多可查 6 个月"。
+     日期区间控件默认宽 350px 上下，窄屏的内容区还不到 320px —— 会直接顶破。
+     让它占满一行，其余内容换行到下一行。 */
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .toolbar :deep(.el-date-editor) {
+    width: 100%;
+  }
+
+  /* 回顾里每天一块的"日期 + 完成 N/M"。桌面端这两项一左一右，
+     窄屏下 N/M 会被推到很右边、和日期拉得很开，看着像两个不相干的东西，
+     改成上下两行。 */
+  .day-head {
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+  }
 }
 </style>

@@ -20,6 +20,16 @@ public enum ResultCode {
 	/** 资源不存在 */
 	NOT_FOUND(404, "资源不存在"),
 
+	/**
+	 * 路径存在但请求方法不对，例如对只支持 {@code PUT/DELETE} 的
+	 * {@code /api/semester/{id}} 发 {@code GET}。
+	 *
+	 * <p>它只在前后端对不上时才出现（真实用户点不出这个错），
+	 * 所以信息是给开发看的：配着响应头 {@code Allow} 一眼就能看出该改成什么。
+	 * 不并进 400 —— 那样就分不清"方法用错了"和"参数传错了"。
+	 */
+	METHOD_NOT_ALLOWED(405, "该接口不支持这个请求方法"),
+
 	/** 业务异常，msg 为可直接展示给用户的提示 */
 	BUSINESS_ERROR(500, "业务异常");
 

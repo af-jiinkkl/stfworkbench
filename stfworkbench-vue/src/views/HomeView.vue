@@ -6,6 +6,8 @@ import * as dashboardApi from '@/api/dashboardApi'
 import UpcomingAnniversaryList from '@/components/UpcomingAnniversaryList.vue'
 import { useUserStore } from '@/store/user'
 import { money } from '@/utils/money'
+import { sectionText } from '@/types/course'
+import { timeText } from '@/types/news'
 import type { Dashboard } from '@/types/dashboard'
 
 /**
@@ -33,6 +35,23 @@ const dashboard = ref<Dashboard | null>(null)
 const TASK_PREVIEW_LIMIT = 6
 
 const upcoming = computed(() => dashboard.value?.upcomingAnniversaries ?? [])
+
+/**
+ * 今天的课。由后端算好（`CourseService#listOnDate`）—— 前端不推"今天第几周"，
+ * 那件事一旦有两份实现，会出现"课表上说有、首页说今天没课"。
+ *
+ * 空数组是**正常状态**（今天没课，或者还没建学期），不是错误。
+ */
+const todayCourses = computed(() => dashboard.value?.todayCourses ?? [])
+
+/**
+ * 今日新闻的前几条。**后端已经截过了**，这里不再 `slice` —— 截两遍的话，
+ * 改卡片条数就得改两个地方，而漏改的那一处不报错，只是卡片条数悄悄变了。
+ *
+ * 空数组是正常状态（没配 appkey、抓取还没跑、或那天确实没抓到），
+ * 此时整块不出现，和"即将到来"同一套取舍。
+ */
+const latestNews = computed(() => dashboard.value?.latestNews ?? [])
 
 const todayPlan = computed(() => dashboard.value?.todayPlan ?? null)
 
@@ -83,9 +102,14 @@ const greeting = computed(() => {
 interface HomeModule {
   label: string
   desc: string
-  /** 已实现的模块给出路由地址，卡片变成可点的；没有这个字段的就是还没做 */
+  /**
+   * 模块的路由地址，卡片因此可点。当前 6 个模块都已给出。
+   *
+   * 写成可选是**故意的**：留着"还没做"这个表达方式，下回再规划模块时可以直接
+   * 往下面那个数组里加一项、先不给 `to`，卡片就自然降级成不可点的
+   */
   to?: string
-  /** 卡片上的一句实时数字，没实现或还没取到数据时为 undefined */
+  /** 卡片上的一句实时数字，没取到数据时为 undefined（那时卡片不给数字，而不是给 0） */
   meta?: string
 }
 
@@ -93,7 +117,8 @@ interface HomeModule {
  * 模块总览。与侧边栏那份是同一批，但这里多一句说明 ——
  * 侧边栏只需要名字，首页要讲清每个模块打算做什么。
  *
- * 已实现的四个模块带上一个数字，数字全部来自上面那一次聚合请求。
+ * 六个模块各带一句实时数字（新闻那条是"今日已更新"，见下面），
+ * 数字全部来自上面那一次聚合请求。
  * 写成 computed 是因为它们随 dashboard 变化；静态数组的话要等到
  * 请求回来再手动改数组里的字符串，容易忘。
  *
@@ -132,19 +157,36 @@ const modules = computed<HomeModule[]>(() => {
       // 不像生日那样留空。这里显示"¥0.00"是对的，空着反而像没取到数据
       meta: dashboard.value ? `今日 ¥${money(dashboard.value.todayExpenseAmount)}` : undefined,
     },
-    { label: '课程表', desc: '每周课程安排' },
-    { label: '每日新闻', desc: '每天值得一读的几条' },
+    {
+      label: '课程表',
+      desc: '每周课程安排',
+      to: '/course',
+      // "今天没课"要说出来：它是个有用的答案（今天自由），
+      // 但没课时**不占一整块面板**，所以只有这条小字（见下面今日课程那块）
+      meta: dashboard.value
+        ? (todayCourses.value.length ? `今日 ${todayCourses.value.length} 节` : '今天没有课')
+        : undefined,
+    },
+    {
+      label: '每日新闻',
+      desc: '每天值得一读的几条',
+      to: '/news',
+      // 这里**不给条数**：聚合只带回来前几条，写"今日 5 条"会与
+      // 新闻页上那个真实条数对不上 —— 而首页的数字没人会去核。
+      // 与生日那套同一取舍：拿不准就不给数字，空着比给个错的强
+      meta: latestNews.value.length ? '今日已更新' : undefined,
+    },
   ]
 })
 </script>
 
 <template>
-  <div class="page">
+  <div class="wb-page">
     <header class="page-header">
-      <h1 class="greeting">
+      <h1 class="wb-title">
         {{ greeting }}<template v-if="nickname">，{{ nickname }}</template>
       </h1>
-      <p class="subtitle">
+      <p class="wb-subtitle">
         下面是规划的模块，做好的可以直接点进去。
       </p>
     </header>
@@ -223,6 +265,49 @@ const modules = computed<HomeModule[]>(() => {
       </RouterLink>
     </section>
 
+    <!-- ========== 今日课程 ========== -->
+    <!-- 有课才出现：没课时不占一整块面板，那句"今天没有课"放在上面的模块卡片里。
+         和"即将到来"同一套取舍：空卡片除了占地方没有别的用处 -->
+    <section
+      v-if="todayCourses.length"
+      class="wb-card panel"
+    >
+      <div class="panel-head">
+        <h2 class="panel-title">
+          今日课程
+        </h2>
+        <span class="head-right">
+          <span class="panel-meta">共 {{ todayCourses.length }} 节</span>
+          <RouterLink
+            to="/course"
+            class="panel-more"
+          >
+            课表 →
+          </RouterLink>
+        </span>
+      </div>
+
+      <!-- 和今日任务一样是**只读**的：不改节次也不改地点，要改去课程表页 -->
+      <ul class="course-list">
+        <li
+          v-for="course in todayCourses"
+          :key="course.id"
+          class="course"
+        >
+          <span class="course-time">{{ sectionText(course.startSection, course.endSection) }}</span>
+          <span class="course-name">{{ course.name }}</span>
+          <span
+            v-if="course.location"
+            class="course-meta"
+          >{{ course.location }}</span>
+          <span
+            v-if="course.teacher"
+            class="course-meta"
+          >{{ course.teacher }}</span>
+        </li>
+      </ul>
+    </section>
+
     <!-- ========== 即将到来 ========== -->
     <!-- 没有临近的日子时整块不出现 —— 一块"暂无提醒"的空白卡片除了占地方
          没有别的用处，还容易让人以为提醒功能坏了 -->
@@ -242,6 +327,57 @@ const modules = computed<HomeModule[]>(() => {
         </RouterLink>
       </div>
       <UpcomingAnniversaryList :items="upcoming" />
+    </section>
+
+    <!-- ========== 每日新闻 ========== -->
+    <!-- 一条都没有时整块不出现，和"即将到来"同一套取舍：
+         一块"暂无新闻"的空白卡片除了占地方没有别的用处 -->
+    <section
+      v-if="latestNews.length"
+      class="wb-card panel"
+    >
+      <div class="panel-head">
+        <h2 class="panel-title">
+          每日新闻
+        </h2>
+        <!-- 只说"全部"，不说"共 N 条"：聚合只带回来前几条，
+             拿它当总数会与新闻页上那个真实条数对不上 -->
+        <RouterLink
+          to="/news"
+          class="panel-more"
+        >
+          全部 →
+        </RouterLink>
+      </div>
+
+      <!-- 和今日任务、今日课程一样是**只读**的：点标题去原文，
+           要浏览全部去新闻页。这里不放任何编辑入口 -->
+      <ul class="news-list">
+        <li
+          v-for="item in latestNews"
+          :key="item.id"
+          class="news"
+        >
+          <!-- 第三方偶尔不给 url，那种记录留着但不可点。
+               不做成空 href 的链接 —— 空 href 指向当前页，点一下像刷新 -->
+          <a
+            v-if="item.url"
+            class="news-title"
+            :href="item.url"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ item.title }}</a>
+          <span
+            v-else
+            class="news-title is-plain"
+          >{{ item.title }}</span>
+
+          <span class="news-meta">
+            <span v-if="item.source">{{ item.source }}</span>
+            <span v-if="item.publishTime">{{ timeText(item.publishTime) }}</span>
+          </span>
+        </li>
+      </ul>
     </section>
 
     <section class="grid">
@@ -283,26 +419,11 @@ const modules = computed<HomeModule[]>(() => {
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
+/* 首页这块与其他页不同：没有右侧按钮，是纯块级的标题 + 副标题，
+   所以**不**用共用的 .wb-page-header（那是 space-between 的 flex 行，
+   套上会让标题块收缩到内容宽度，桌面端看得见）。只留一个下边距即可。 */
 .page-header {
   margin-bottom: 28px;
-}
-
-.greeting {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
 }
 
 /* ---------- 今日计划 ---------- */
@@ -335,6 +456,14 @@ const modules = computed<HomeModule[]>(() => {
 
 .panel-more:hover {
   color: var(--wb-text-secondary);
+}
+
+/* 卡片右上角的一撮：数字 + 出口。包一层是为了让 .panel-head 的
+   space-between 只面对"标题"和"右侧这一撮"两项 */
+.head-right {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
 }
 
 .progress {
@@ -385,6 +514,9 @@ const modules = computed<HomeModule[]>(() => {
   text-decoration: line-through;
 }
 
+/* 方框 16px、里面的勾 13px，两个数都**故意**不接字号阶。
+   内容区只有 16 − 2（边框）= 14px，而 --wb-text-sm 已经是 15px ——
+   把 13px 换成那个 token，勾会溢出方框。改这里时两个数要一起算。 */
 .task-mark {
   display: grid;
   place-items: center;
@@ -422,6 +554,49 @@ const modules = computed<HomeModule[]>(() => {
   color: var(--wb-text-secondary);
 }
 
+/* ---------- 今日课程 ---------- */
+.course-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.course {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.course:last-child {
+  border-bottom: none;
+}
+
+/* 节次是这一行里唯一"定宽可比"的东西，给固定宽度让课名上下对齐 */
+.course-time {
+  flex-shrink: 0;
+  width: 72px;
+  font-size: var(--wb-text-xs);
+  color: var(--wb-text-muted);
+}
+
+.course-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--wb-text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-meta {
+  flex-shrink: 0;
+  font-size: var(--wb-text-xs);
+  color: var(--wb-text-muted);
+}
+
 /* ---------- 即将到来 ---------- */
 .soon-panel {
   padding: 16px 20px 18px;
@@ -449,6 +624,56 @@ const modules = computed<HomeModule[]>(() => {
 
 .soon-more:hover {
   color: var(--wb-text-secondary);
+}
+
+/* ---------- 每日新闻 ---------- */
+.news-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.news {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--wb-border);
+}
+
+.news:last-child {
+  border-bottom: none;
+}
+
+/* 标题占满剩余宽度、超长省略：它是一行里唯一需要读的东西 */
+.news-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--wb-text-sm);
+  color: var(--wb-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.news-title:hover {
+  color: var(--wb-text-secondary);
+  text-decoration: underline;
+}
+
+/* 没有链接的那几条：不是链接就不要摆出链接的样子 */
+.news-title.is-plain {
+  color: var(--wb-text-secondary);
+}
+
+.news-meta {
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  align-items: baseline;
+  font-size: var(--wb-text-xs);
+  color: var(--wb-text-muted);
 }
 
 /* ---------- 模块总览 ---------- */
@@ -517,5 +742,44 @@ const modules = computed<HomeModule[]>(() => {
   font-size: var(--wb-text-sm);
   font-weight: 500;
   color: var(--wb-text-secondary);
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 今日课程 / 今日新闻两行都是"主内容 + 补充信息"，
+     而补充信息（地点·老师 / 来源·时间）都是 flex-shrink: 0 —— 窄屏上
+     它们不肯让位，被挤成省略号的只能是中间的课名和标题。允许换行。 */
+  .course,
+  .news {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  /* 节次那 72px 在窄屏太占地方 */
+  .course-time {
+    width: 56px;
+  }
+
+  /* 仅仅"允许换行"还不够：地点和老师加起来往往不到 130px，
+     它们会心安理得地留在第一行，于是被挤扁的还是课名 ——
+     实测课名只剩 91px（六个字），而它才是这一行里唯一要读的东西。
+
+     给课名一个下限，逼它把两个 meta 挤到第二行。50% 不是精确值：那一行
+     总共 260px 上下，课名拿到 137px（约 9 个字，比原来的 6 个多一半），
+     再多会把节次那一列也顶掉。 */
+  .course-name {
+    min-width: 50%;
+  }
+
+  /* 课名 / 标题**不**设 flex-basis: 100%：它们要留在第一行把剩余宽度吃满
+     （课名是 flex: 1，本来就会），设成 100% 反而会把课程行拆成四行
+     ——「节次 / 课名 / 地点 / 老师」。
+
+     课程行不设，靠自然换行：两处 meta 是 flex-shrink: 0，放不下时自己
+     落到第二行，放得下就留在第一行，不必替它决定。
+     新闻行只有一处 meta，让它整行走第二行 —— 标题独占第一行更可读。 */
+  .news-meta {
+    flex-basis: 100%;
+  }
 }
 </style>

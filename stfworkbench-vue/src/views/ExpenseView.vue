@@ -120,8 +120,13 @@ async function loadList(): Promise<void> {
     list.value = result.records
     total.value = result.total
   }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection。
+    // 走 refreshAll 那条路本来有人兜（它自带 .catch），漏的是**翻页器**：
+    // handlePageChange 是 `void loadList()`，把 promise 丢掉的同时也没接错误
+  }
   finally {
-    // 出错时 request.ts 的拦截器已经弹过提示了，这里只负责把 loading 收掉
+    // 这里只负责把 loading 收掉
     loading.value = false
   }
 }
@@ -135,13 +140,31 @@ const trendYear = ref(Number(today().slice(0, 4)))
 /** 趋势图的年份选项：今年往前数五年。再往前对个人记账没有意义 */
 const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => trendYear.value - i)
 
+/*
+ * 两张图各自的加载。两个都自己接住错误，理由同 loadList ——
+ * 趋势图那条尤其明显：年份选择器上写的是 `@change="loadTrend"`，
+ * 事件回调的返回值同样没人接。
+ *
+ * 失败时保留上一次的图而不是清空：清空会让卡片变成一片空白，
+ * 看着像"这个月没有数据"，而实际只是这一次请求没成。
+ */
 async function loadPie(): Promise<void> {
   const current = range.value
-  categorySummary.value = await expenseApi.summaryByCategory(current?.[0], current?.[1])
+  try {
+    categorySummary.value = await expenseApi.summaryByCategory(current?.[0], current?.[1])
+  }
+  catch {
+    // 拦截器弹过提示了，见上
+  }
 }
 
 async function loadTrend(): Promise<void> {
-  monthSummary.value = await expenseApi.summaryByMonth(trendYear.value)
+  try {
+    monthSummary.value = await expenseApi.summaryByMonth(trendYear.value)
+  }
+  catch {
+    // 拦截器弹过提示了，见上
+  }
 }
 
 /**
@@ -405,7 +428,17 @@ async function save(): Promise<void> {
       hidden ? '已保存；这一笔不在当前筛选范围内，已重置筛选' : (isCreate ? '已保存' : '已更新'),
     )
 
-    await Promise.all([loadList(), loadPie()])
+    // 三样**都**要刷。这里原先只刷了列表和饼图，漏掉趋势图 ——
+    // 于是补录一笔"本月"的账，上面那张"月度趋势"纹丝不动，
+    // 而同一页的删除走的是 refreshAll（三样齐全）。
+    // 同一页面上两个口径，用户看到的是"保存好像没生效"。
+    // catch 掉的理由同 refreshAll：拦截器已经弹过提示，这里只求这轮刷新安静结束
+    await Promise.all([loadList(), loadPie(), loadTrend()]).catch(() => {})
+  }
+  catch {
+    // create / update 失败了。拦截器弹过提示了，这里**不关弹窗** ——
+    // 用户填的内容还在，改完能直接重试。
+    // （关弹窗那一行写在 try 里建/改成功之后，失败时根本走不到）
   }
   finally {
     submitting.value = false
@@ -425,7 +458,15 @@ async function remove(item: Expense): Promise<void> {
     return
   }
 
-  await expenseApi.remove(item.id)
+  try {
+    await expenseApi.remove(item.id)
+  }
+  catch {
+    // 同 save：拦截器弹过提示，接住是为了不冒成 unhandled rejection。
+    // 直接返回 —— 既不报"已删除"，也不白刷一遍列表和两张图
+    return
+  }
+
   ElMessage.success('已删除')
 
   // 删掉的是当前页最后一条时往前退一页。不退的话会停在一张空列表上，
@@ -440,13 +481,13 @@ onMounted(refreshAll)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           每日消费
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           花在哪儿了，一眼看得见。
         </p>
       </div>
@@ -750,31 +791,8 @@ onMounted(refreshAll)
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 /* ---------- 图表 ---------- */
 .charts {
@@ -908,6 +926,15 @@ onMounted(refreshAll)
   opacity: 1;
 }
 
+/* 触屏没有 hover，见 PlanView 里同一处的说明。
+   这一处比另外三处更急：表格行不是可聚焦元素，`:focus-within` 那半条也指望不上，
+   所以触屏下这个"删除"按钮原本既看不见、又找不到任何办法让它显形。 */
+@media (hover: none) {
+  .expense-table :deep(.row-actions) {
+    opacity: 1;
+  }
+}
+
 /* ---------- 分页 / 空态 ---------- */
 .pager {
   display: flex;
@@ -927,5 +954,34 @@ onMounted(refreshAll)
 /* ---------- 表单 ---------- */
 .full-width {
   width: 100%;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 两个控件原本定宽 260 / 140px，是为了在桌面端不把「查询」按钮挤出这一行。
+     窄屏下这一行只有 260px 上下（390 - 侧栏 56 - 页面内边距 32 - 卡片内边距 40），
+     光日期选择器一个就把整行占满 —— 分类和按钮只能各占一行，看着像三件不相干的东西。
+
+     `width: 100%` 在这条 flex 行里同时起到了"占满一行"的作用：它是元素的
+     flex-basis（默认 auto 会取 width），basis 等于整行宽 → 换行必然发生，
+     于是预设按钮、两个筛选控件、查询按钮各占一行。
+     `.filter-row` 本来就有 flex-wrap，这里只需要松开定宽。 */
+  .range-picker,
+  .category-select {
+    width: 100%;
+  }
+
+  /* 图表的标题行和「合计 ¥xx.xx」并排时会被挤扁，让它换行 */
+  .chart-head {
+    flex-wrap: wrap;
+  }
+
+  /* 翻页器（上一页 / 页码 / 下一页 / 共 N 条）在 390px 下放不下。
+     让它换行而不是横向溢出 —— 溢出会被算成布局破版。
+     注意 el-pagination 是 EP 的组件，scoped 够不到它内部，所以是 :deep()。 */
+  .pager :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
 }
 </style>

@@ -78,9 +78,13 @@ class PlanTaskIsolationTest {
 				"INSERT INTO `wb_plan_task` (`user_id`, `plan_date`, `content`, `completed`, `sort_order`)"
 						+ " VALUES (?, ?, ?, 0, 0)",
 				userId, TEST_DATE, content);
+		// 回查**带上 user_id**：只按 (日期, 内容) 找的话，库里任何一条同名同日的
+		// 记录都会撞进来 —— 而这几个字段都不唯一，本类清理时又只删自己那两个
+		// 测试用户的（见 cleanTestUsers）。撞上的表现是 queryForObject 抛
+		// IncorrectResultSize，跟这里要验的隔离毫无关系
 		return jdbcTemplate.queryForObject(
-				"SELECT `id` FROM `wb_plan_task` WHERE `plan_date` = ? AND `content` = ?",
-				Long.class, TEST_DATE, content);
+				"SELECT `id` FROM `wb_plan_task` WHERE `user_id` = ? AND `plan_date` = ? AND `content` = ?",
+				Long.class, userId, TEST_DATE, content);
 	}
 
 	/** 绕过 Mapper 直接读库，用来断言"库里到底存成什么样" */

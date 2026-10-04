@@ -48,6 +48,14 @@ workbench:
     # 注册开关，见 docs/接口清单.md §12 已确认事项 2
     # 关掉后 POST /api/auth/register 返回 403
     enabled: ${REGISTRATION_ENABLED:true}
+  news:
+    # 聚合数据（v.juhe.cn）的 appkey，见 docs/接口清单.md §8。
+    # **没有默认值，且未配置时不影响启动** —— 与上面的 jwt.secret 刻意相反：
+    # 没有新闻只是首页少一张卡片，而一个拿不到密钥的 JWT 应用会发出谁都验不了的 token。
+    # 未配置时定时任务安静跳过抓取，/api/news 照常返回库里已有的数据（可能是空数组）
+    appkey: ${JUHE_NEWS_KEY:}
+    # 抓取周期：每小时第 7 分钟。挑非整点，避开对方的高峰时段
+    fetch-cron: ${JUHE_NEWS_CRON:0 7 * * * *}
 
 logging:
   level:

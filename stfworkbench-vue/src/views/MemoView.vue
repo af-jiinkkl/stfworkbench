@@ -9,8 +9,9 @@ import type { Memo, MemoParams } from '@/types/memo'
 /**
  * 备忘录。对应 docs/接口清单.md §6 的 5 个接口。
  *
- * 这是目前唯一一个**分页**的模块：每日计划和生日纪念日的量天然很小，
- * 备忘则会越攒越多，列表必须分页。也是唯一带搜索的。
+ * 这是第一个**分页**的模块：每日计划和生日纪念日的量天然很小，
+ * 备忘则会越攒越多，列表必须分页。消费页后来也分页了（同一个理由：账会一直记下去），
+ * 而**关键词搜索仍然只有本模块有** —— 消费那边是筛（区间、分类），不是搜。
  *
  * 列表接口不返回正文（只给摘要），所以"点一条"要再发一次详情请求。
  * 这也是为什么打开编辑有一个独立的 loading —— 正文还在路上。
@@ -33,9 +34,15 @@ async function load(): Promise<void> {
     list.value = result.records
     total.value = result.total
   }
+  catch {
+    // 拦截器已经弹过提示了，这里接住只是为了不冒成 unhandled rejection。
+    //
+    // 这里原先**故意不接**，注释写的是"让调用方（比如 save 之后的重新加载）
+    // 能感知到失败"。但四个调用点 —— onMounted、搜索、删除后重拉、保存后重拉 ——
+    // 没有一个去看它：两个把 promise 丢掉，两个直接 await。也就是说那份"感知能力"
+    // 从来没被用过，实际留下的只有一条 unhandled rejection
+  }
   finally {
-    // 出错时 request.ts 的拦截器已经弹过提示了，这里只负责把 loading 收掉。
-    // 不 catch 掉异常，是为了让调用方（比如 save 之后的重新加载）能感知到失败
     loading.value = false
   }
 }
@@ -168,6 +175,9 @@ async function save(): Promise<void> {
     }
     await load()
   }
+  catch {
+    // 拦截器弹过提示了。这里**不关弹窗** —— 用户填的内容还在，改完能直接重试
+  }
   finally {
     submitting.value = false
   }
@@ -186,7 +196,15 @@ async function remove(item: Memo): Promise<void> {
     return
   }
 
-  await memoApi.remove(item.id)
+  try {
+    await memoApi.remove(item.id)
+  }
+  catch {
+    // 同 save：拦截器弹过提示，接住是为了不冒成 unhandled rejection。
+    // 直接返回 —— 既不报"已删除"，也不白重拉一次
+    return
+  }
+
   ElMessage.success('已删除')
 
   // 删掉的是当前页最后一条时往前退一页。不退的话会停在一张空列表上，
@@ -220,13 +238,13 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
+  <div class="wb-page">
+    <header class="wb-page-header">
       <div>
-        <h1 class="title">
+        <h1 class="wb-title">
           备忘录
         </h1>
-        <p class="subtitle">
+        <p class="wb-subtitle">
           随手记下的碎片，回头搜得到。
         </p>
       </div>
@@ -376,31 +394,8 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page {
-  max-width: var(--wb-content-max);
-  padding: 40px;
-  margin: 0 auto;
-}
-
-.page-header {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-}
-
-.title {
-  font-size: var(--wb-text-2xl);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.subtitle {
-  margin-top: 8px;
-  font-size: var(--wb-text-sm);
-  color: var(--wb-text-muted);
-}
+/* 页面外壳（.wb-page / .wb-title / .wb-subtitle / .wb-page-header）已提到
+   styles/index.css，那里也是窄屏 padding 的唯一一处实现。此处不再重复。 */
 
 /* ---------- 卡片 ---------- */
 .panel {
@@ -496,6 +491,13 @@ onMounted(load)
   opacity: 1;
 }
 
+/* 触屏没有 hover，见 PlanView 里同一处的说明 */
+@media (hover: none) {
+  .memo-actions {
+    opacity: 1;
+  }
+}
+
 /* ---------- 分页 ---------- */
 .pager {
   display: flex;
@@ -510,5 +512,40 @@ onMounted(load)
   font-size: var(--wb-text-sm);
   color: var(--wb-text-muted);
   text-align: center;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 768px) {
+  /* 一条备忘在桌面端是"标题 + 摘要 + 时间 + 操作"挤一行，
+     其中标题被 max-width: 40% 封顶、还不许收缩（flex-shrink: 0）。
+
+     窄屏把这一行拆成两行：第一行标题 + 摘要，第二行时间 + 操作。
+     做法的关键在 `.memo-main` 那个 flex-basis: 100% —— 它让"标题 + 摘要"
+     这两项整体占满第一行，后面两个兄弟（时间、操作）自然被挤到第二行，
+     不必给它们各自写规则。 */
+  .memo-item {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .memo-main {
+    flex-basis: 100%;
+  }
+
+  /* 40% 的上限在 390px 下只剩 120px 上下，稍长的标题就被切掉大半。
+     松开上限、改为允许收缩：摘要短的时候标题就能多用一些宽度，
+     两者按内容分配这一行。 */
+  .memo-title {
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: none;
+  }
+
+  /* 翻页器（上一页 / 页码 / 下一页 / 共 N 条）在 390px 下放不下，
+     换行而不是横向溢出。el-pagination 是 EP 的组件，scoped 够不到内部。 */
+  .pager :deep(.el-pagination) {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
 }
 </style>

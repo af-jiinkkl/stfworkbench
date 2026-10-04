@@ -8,6 +8,7 @@ import {
   Notebook,
   Present,
   Reading,
+  SwitchButton,
   Wallet,
 } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
@@ -15,31 +16,24 @@ import { useUserStore } from '@/store/user'
 /**
  * 工作台外壳：左侧固定导航 + 右侧内容区。
  *
- * 做成 layout 而不是写在 HomeView 里，是因为后面 6 个模块都要共用这套导航 ——
+ * 做成 layout 而不是写在 HomeView 里，是因为其余 7 个页面都要共用这套导航 ——
  * 否则每加一个模块就得复制一遍侧边栏。
  */
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-/** 已经做得出来的页面。 */
+/**
+ * 已经做得出来的页面。顺序与首页模块总览一致，两边看着才是同一套。
+ */
 const navItems = [
   { name: 'home', label: '首页', icon: HomeFilled, to: '/' },
   { name: 'plan', label: '每日计划', icon: Calendar, to: '/plan' },
   { name: 'anniversary', label: '生日纪念日', icon: Present, to: '/anniversary' },
   { name: 'memo', label: '备忘录', icon: Memo, to: '/memo' },
   { name: 'expense', label: '每日消费', icon: Wallet, to: '/expense' },
-]
-
-/**
- * 规划中、尚未实现的模块。
- *
- * 这里刻意**不**做成可点的空路由：点进去只有一个空白页，比灰着更让人困惑。
- * 模块落地时，把它从下面这个数组移到 navItems 并加一条路由即可。
- */
-const upcomingModules = [
-  { label: '课程表', icon: Notebook },
-  { label: '每日新闻', icon: Reading },
+  { name: 'course', label: '课程表', icon: Notebook, to: '/course' },
+  { name: 'news', label: '每日新闻', icon: Reading, to: '/news' },
 ]
 
 const nickname = computed(() => userStore.userInfo?.nickname ?? '')
@@ -93,27 +87,14 @@ async function handleLogout(): Promise<void> {
           :to="item.to"
           class="nav-item"
           :class="{ 'is-active': route.name === item.name }"
+          :title="item.label"
+          :aria-label="item.label"
         >
           <el-icon class="nav-icon">
             <component :is="item.icon" />
           </el-icon>
-          <span>{{ item.label }}</span>
+          <span class="nav-label">{{ item.label }}</span>
         </router-link>
-
-        <p class="nav-caption">
-          即将上线
-        </p>
-
-        <div
-          v-for="mod in upcomingModules"
-          :key="mod.label"
-          class="nav-item is-disabled"
-        >
-          <el-icon class="nav-icon">
-            <component :is="mod.icon" />
-          </el-icon>
-          <span>{{ mod.label }}</span>
-        </div>
       </nav>
 
       <div class="sidebar-footer">
@@ -124,9 +105,14 @@ async function handleLogout(): Promise<void> {
         <button
           type="button"
           class="logout"
+          title="退出"
+          aria-label="退出登录"
           @click="handleLogout"
         >
-          退出
+          <el-icon class="logout-icon">
+            <SwitchButton />
+          </el-icon>
+          <span class="logout-text">退出</span>
         </button>
       </div>
     </aside>
@@ -218,26 +204,10 @@ a.nav-item:hover {
   color: var(--wb-text);
 }
 
-/* 未实现的模块：只读地摆在那里，不可点也不响应悬停。
-   文字和图标各比对应的可用项轻一档，整体构成一个"整块降一档"的观感 ——
-   之前两处都用了最浅的色，淡到快读不出字了。 */
-.nav-item.is-disabled {
-  color: var(--wb-text-muted);
-  cursor: default;
-}
-
-.nav-item.is-disabled .nav-icon {
-  color: var(--wb-text-faint);
-}
-
-.nav-caption {
-  padding: 0 12px;
-  margin: 24px 0 8px;
-  font-size: var(--wb-text-sm);
-  font-weight: 500;
-  color: var(--wb-text-muted);
-  letter-spacing: 0.04em;
-}
+/* 规划中的模块曾经在这里，样式是 .nav-item.is-disabled（不可点、不响应悬停）。
+   六个业务模块全部落地后那段连同"即将上线"标题一起删掉了 —— 空标题下面没有条目
+   比灰着更让人困惑。将来再加未实现的模块时，样式照上面那套写：
+   文字用 --wb-text-muted、图标用 --wb-text-faint，整体比可用项降一档。 */
 
 /* ---------- 侧边栏底部 ---------- */
 .sidebar-footer {
@@ -294,10 +264,97 @@ a.nav-item:hover {
   background-color: var(--wb-surface-hover);
 }
 
+/* 退出图标的**默认状态是隐藏**，只在窄屏图标栏里出现。
+   不这么写就等于顺手改了桌面端的样子 —— 上面那条"桌面端零变化"的约束是硬要求。 */
+.logout-icon {
+  display: none;
+}
+
 /* ---------- 内容区 ---------- */
 .content {
   flex: 1;
   min-width: 0; /* 不加的话内部超宽内容会把 flex 容器撑破 */
   overflow-y: auto;
+}
+
+/* ============================================================
+ * 窄屏：侧边栏收成 56px 图标栏（常驻，不做抽屉）
+ *
+ * 268px 的侧边栏在 390px 的手机上会让内容区只剩 122px，整站不可用。
+ * 收成图标栏而不是抽屉，是为了**不引入状态** —— 抽屉要配 `isSidebarOpen`、
+ * 遮罩、Esc、锁 body 滚动、路由变化时自动关这五样，其中"路由变化时忘了关"
+ * 是最容易漏的一条；图标栏把这些全绕开了，导航还始终可见。
+ *
+ * 断点只取 768px 一个：769–1024px 内容区还有 500px 以上，配合各页自己的
+ * 横向滚动已经够用，不再多设一档。
+ * ============================================================ */
+@media (max-width: 768px) {
+  .sidebar {
+    /* 桌面用的 --wb-sidebar-width 保持 268px 不动，只在这里覆盖 */
+    width: 56px;
+  }
+
+  .brand {
+    justify-content: center;
+    padding: 22px 0 18px;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  .nav {
+    padding: 0 8px;
+  }
+
+  /* 图标栏里图标是唯一的表意元素：居中、给足触摸目标（≥40px） */
+  .nav-item {
+    justify-content: center;
+    min-height: 40px;
+    padding: 10px 0;
+  }
+
+  /* 文字隐藏会**同时把它从无障碍树里摘掉**，所以模板里必须补 aria-label ——
+     否则读屏软件读到的是 7 个没有名字的链接。见模板上的 :aria-label。 */
+  .nav-label {
+    display: none;
+  }
+
+  .nav-icon {
+    font-size: 20px;
+  }
+
+  /* 底部改竖排：头像在上、退出在下 */
+  .sidebar-footer {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+  }
+
+  .account {
+    justify-content: center;
+  }
+
+  .account-name {
+    display: none;
+  }
+
+  .logout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 32px;
+    padding: 0;
+  }
+
+  .logout-icon {
+    display: inline-flex;
+    font-size: 18px;
+  }
+
+  .logout-text {
+    display: none;
+  }
 }
 </style>

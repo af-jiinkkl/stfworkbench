@@ -10,6 +10,8 @@
 --   feature/anniversary ：wb_anniversary
 --   feature/memo        ：wb_memo
 --   feature/expense     ：wb_expense
+--   feature/course      ：wb_semester、wb_course
+--   feature/news        ：wb_news
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS `stfworkbench`
@@ -143,3 +145,104 @@ CREATE TABLE `wb_expense` (
   -- (user_id, expense_date) 前导列正好覆盖"查某人某天"和"查某人某段日期"两种查询
   KEY `idx_user_date` (`user_id`, `expense_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='消费记录';
+
+-- ------------------------------------------------------------
+-- 学期
+-- ------------------------------------------------------------
+-- 本表**含 user_id**，隔离由拦截器负责。
+--
+-- `start_date` 是**第 1 周的周一**，这一点是整个课程表的地基：
+-- 课表上的一切（第 N 周星期几）都要靠它换算成真实日期，
+-- 基准偏一天，整张表就整体偏一天，而显示出来仍然是一张"看着对"的课表。
+--
+-- 正因为错得安静，这个约定**不能只写在文档里**：接口在写入时校验
+-- （不是周一就返回 400，见 SemesterServiceImpl），否则前端随便选个日期
+-- 也能存进去，之后没有任何一步会报错。
+--
+-- `total_weeks` 是"这门课最多能排到第几周"的上界，课程那边要用它对
+-- start_week / end_week 做范围校验。
+CREATE TABLE `wb_semester` (
+  `id`          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id`     BIGINT      NOT NULL                COMMENT '所属用户',
+  `name`        VARCHAR(50) NOT NULL                COMMENT '学期名称',
+  `start_date`  DATE        NOT NULL                COMMENT '第 1 周的周一',
+  `total_weeks` TINYINT     NOT NULL                COMMENT '总周数',
+  `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP                COMMENT '创建时间',
+  `update_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `deleted`     BIGINT      NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 未删除，非 0 为删除时间戳',
+  PRIMARY KEY (`id`),
+  KEY `idx_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='学期';
+
+-- ------------------------------------------------------------
+-- 课程
+-- ------------------------------------------------------------
+-- 本表**含 user_id**，隔离由拦截器负责。
+--
+-- 注意 `semester_id` 只是个外键**值**，没有任何约束能保证它指向的学期
+-- 属于同一个人。租户插件管的是 wb_course 自己的 user_id，管不到这一列 ——
+-- 所以"新增课程时先确认那个学期是自己的"必须在 Service 里显式做
+-- （见 CourseServiceImpl）。漏了不会报错，只会留下一条指向别人学期的悬空记录。
+--
+-- 一天 **6 节**：1 早晨 / 2-3 上午 / 4-5 下午 / 6 晚上。
+-- 时段归属**不存库**，由前端按节次推导 —— 存一份就是给"上午"这种说法
+-- 留了两个可能不一致的定义。
+--
+-- 一门课在课表上占多个格子（周一 1-2 节、周三 3-4 节），就在表里存**多条记录**，
+-- 不设计"多时段"字段。代价是同一门课的若干条要一起改；好处是每一格都是
+-- 一条独立、可单独移动的记录，课表这种"天天在微调"的东西按格子存更顺手。
+--
+-- `week_type`：0 每周 / 1 单周 / 2 双周。单双周是相对**学期的第几周**而言的，
+-- 不是自然周的奇偶 —— 换算时要用 (第 N 周)，别拿日历周的周数去判。
+CREATE TABLE `wb_course` (
+  `id`            BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `user_id`       BIGINT      NOT NULL                COMMENT '所属用户',
+  `semester_id`   BIGINT      NOT NULL                COMMENT '所属学期',
+  `name`          VARCHAR(50) NOT NULL                COMMENT '课程名',
+  `teacher`       VARCHAR(50) NOT NULL DEFAULT ''     COMMENT '任课老师',
+  `location`      VARCHAR(50) NOT NULL DEFAULT ''     COMMENT '上课地点',
+  `day_of_week`   TINYINT     NOT NULL                COMMENT '星期几 1-7',
+  `start_section` TINYINT     NOT NULL                COMMENT '开始节次 1-6',
+  `end_section`   TINYINT     NOT NULL                COMMENT '结束节次 1-6',
+  `start_week`    TINYINT     NOT NULL                COMMENT '起始周',
+  `end_week`      TINYINT     NOT NULL                COMMENT '结束周',
+  `week_type`     TINYINT     NOT NULL DEFAULT 0      COMMENT '周类型：0 每周，1 单周，2 双周',
+  `create_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP                COMMENT '创建时间',
+  `update_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `deleted`       BIGINT      NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 未删除，非 0 为删除时间戳',
+  PRIMARY KEY (`id`),
+  -- 前导列覆盖"查某人某学期的全部课"，外加 user_id 本身
+  KEY `idx_user_semester` (`user_id`, `semester_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='课程';
+
+-- ------------------------------------------------------------
+-- 新闻缓存
+-- ------------------------------------------------------------
+-- ⚠️ 本表是**全局共享**的：没有 user_id，所有用户看同一份新闻
+-- （需求说明 §3.5）。它是本项目里唯一一张同时缺三样"通用字段"的表 ——
+-- 没有 user_id、没有 update_time、没有 deleted。这是已确认的例外，
+-- 不是漏写：它存的是缓存不是业务数据，逻辑删除在这里没有意义。
+--
+-- 数据来源是**后端定时任务**（NewsFetchJob 每小时拉一次聚合数据），
+-- 绝不能改成"用户请求时实时调第三方接口"—— 那是按次计费的接口，
+-- 几十个用户刷几次页面就把配额耗光了（需求说明 §3.5 把它定为架构决定）。
+--
+-- fetch_date 与 publish_time 是两件事，都要留：
+--   fetch_date  我们**抓到**它的日期，接口按"今天抓的"取数
+--   publish_time 它**发布**的时间，列表按它倒序
+-- 中间隔着的那个空档正是这个表存在的理由 —— 凌晨抓到一条昨晚发布的新闻，
+-- 它属于今天的列表，但发布时间还在昨天。
+--
+-- publish_time 允许为 NULL：第三方偶尔给出解析不了的时间字符串，
+-- 那一条仍值得显示（标题和链接都在），只是排序时排在最后。
+CREATE TABLE `wb_news` (
+  `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `title`        VARCHAR(255) NOT NULL                COMMENT '标题',
+  `source`       VARCHAR(50)  NOT NULL DEFAULT ''     COMMENT '来源（第三方给的 author_name）',
+  `url`          VARCHAR(500) NOT NULL DEFAULT ''     COMMENT '原文链接',
+  `publish_time` DATETIME     NULL                    COMMENT '发布时间，第三方未给出时为 NULL',
+  `fetch_date`   DATE         NOT NULL                COMMENT '抓取日期，按它取"今天的新闻"',
+  `create_time`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '入库时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_fetch_date` (`fetch_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='新闻缓存';

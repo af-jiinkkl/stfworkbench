@@ -2,11 +2,15 @@ package org.example.workbenchserver.service.impl;
 
 import org.example.workbenchserver.common.util.WorkbenchTime;
 import org.example.workbenchserver.service.AnniversaryService;
+import org.example.workbenchserver.service.CourseService;
 import org.example.workbenchserver.service.DashboardService;
 import org.example.workbenchserver.service.ExpenseService;
 import org.example.workbenchserver.service.MemoService;
+import org.example.workbenchserver.service.NewsService;
 import org.example.workbenchserver.service.PlanTaskService;
+import org.example.workbenchserver.vo.CourseVO;
 import org.example.workbenchserver.vo.DashboardVO;
+import org.example.workbenchserver.vo.NewsVO;
 import org.example.workbenchserver.vo.PlanTaskVO;
 import org.example.workbenchserver.vo.TodayPlanVO;
 import org.example.workbenchserver.vo.UpcomingAnniversaryVO;
@@ -28,14 +32,19 @@ import java.util.List;
  *   <li>即将到来的生日走 {@link AnniversaryService#upcoming()}，与纪念日页、
  *       以及原来的 {@code GET /api/anniversary/upcoming} 是同一段代码</li>
  *   <li>今日消费走 {@link ExpenseService#sumOf}，与消费页的饼图合计是同一条路径</li>
+ *   <li>今日课程走 {@link CourseService#listOnDate}，与课程表页翻到本周看到的是同一段代码 ——
+ *       "今天算第几周、这门课这周上不上"只在那边判一次</li>
+ *   <li>今日新闻走 {@link NewsService#latestToday}，与 {@code /news} 页读的是同一张表；
+ *       "今天抓到哪一批"由 {@code fetch_date} 一处定义</li>
  * </ul>
  *
  * <p>若在这里自己拼一个 {@code LambdaQueryWrapper} 查表，就会有第二份
  * "哪些日子算即将到来"的判断。两份都能跑、都不会报错，只会在某一天悄悄给出
  * 不同的天数 —— 那是这类聚合接口最典型的坏法。
  *
- * <p>数据隔离同样不需要在这里操心：三个 Service 各自查的都是当前用户的数据，
- * 条件是拦截器注入的。这个类里没有 {@code user_id}，也不该有。
+ * <p>数据隔离同样不需要在这里操心：除新闻外，各 Service 查的都是当前用户的数据，
+ * 条件是拦截器注入的。这个类里没有 {@code user_id}，也不该有 ——
+ * 新闻那一项则是**本来就不分用户**，别看到它没条件就"顺手"补一个。
  */
 @Service
 public class DashboardServiceImpl implements DashboardService {
@@ -44,15 +53,21 @@ public class DashboardServiceImpl implements DashboardService {
 	private final AnniversaryService anniversaryService;
 	private final MemoService memoService;
 	private final ExpenseService expenseService;
+	private final CourseService courseService;
+	private final NewsService newsService;
 
 	public DashboardServiceImpl(PlanTaskService planTaskService,
 			AnniversaryService anniversaryService,
 			MemoService memoService,
-			ExpenseService expenseService) {
+			ExpenseService expenseService,
+			CourseService courseService,
+			NewsService newsService) {
 		this.planTaskService = planTaskService;
 		this.anniversaryService = anniversaryService;
 		this.memoService = memoService;
 		this.expenseService = expenseService;
+		this.courseService = courseService;
+		this.newsService = newsService;
 	}
 
 	@Override
@@ -74,7 +89,17 @@ public class DashboardServiceImpl implements DashboardService {
 		LocalDate today = WorkbenchTime.today();
 		BigDecimal todayExpense = expenseService.sumOf(today, today);
 
-		return new DashboardVO(todayPlan, upcoming, memoService.count(), todayExpense);
+		// 今日课程把 today 传下去，而不是让 CourseService 自己再取一次今天 ——
+		// 本方法里"今天"只取一次，免得这个字段和其他字段跨了一次午夜
+		List<CourseVO> todayCourses = courseService.listOnDate(today);
+
+		// 今日新闻是唯一一个**不按用户分**的字段：所有用户看到同一份缓存。
+		// 它读的 wb_news 在 MybatisPlusConfig.TABLES_WITHOUT_USER_ID 里，
+		// 这里既不用、也无法传 user_id
+		List<NewsVO> latestNews = newsService.latestToday(NewsService.HOME_LATEST_COUNT);
+
+		return new DashboardVO(todayPlan, todayCourses, upcoming,
+				memoService.count(), todayExpense, latestNews);
 	}
 
 }

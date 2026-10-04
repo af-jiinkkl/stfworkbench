@@ -9,11 +9,30 @@
 
 ## 当前状态
 
-**五条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
+**七条链路已打通：注册 → 登录 → 首页、每日计划（增删改查 + 勾选 + 回顾）、
 生日纪念日（增删改查 + 首页提前提醒）、备忘录（分页 + 关键词搜索 + 详情）、
-每日消费（增删改查 + 区间/分类筛选 + 分类饼图 + 月度折线图）。
-首页由 `GET /api/dashboard` 一次聚合今日计划 + 临近生日 + 备忘条数 + 今日消费**
-（分支 `feature/auth-login`，尚未合并到 `main`）。
+每日消费（增删改查 + 区间/分类筛选 + 分类饼图 + 月度折线图）、
+课程表（学期 + 每周网格 + 周次导航 + 单双周 + 首页今日课程）、
+每日新闻（第三方抓取 + 定时任务 + 只读列表 + 首页卡片）。
+首页由 `GET /api/dashboard` 一次聚合今日计划 + 今日课程 + 临近生日 + 备忘条数 + 今日消费 + 最新新闻**。
+
+前端共 **7 个页面**（首页 + 六个业务模块），**这 7 页都已做窄屏（≤768px）适配**：
+侧边栏缩成 56px 图标栏、各页窄屏规则、触屏下操作按钮一律显形。
+**只动了前端**，后端一行没改。桌面端（>768px）外观保持原样。
+
+合并进度：**`main` 停在每日消费（`d509624`），其后有 6 支尚未合并回去**。
+这 6 支是**串起来的**（每一支都从上一支的顶端切出），合并得按链子的顺序走：
+
+`feature/course` → `feature/news` → `feature/mobile` → `feature/font-scale`
+→ `fix/frontend-async-errors` → `docs/consistency-fixes`
+
+顺序换不得：新闻接在课程表后面（按 `db/schema.sql` 顶部的表 → 分支对照表，
+`wb_news` 属于这一支）；窄屏适配要改到新闻页和课程表页，排在它们之后；
+字号那条调的又是窄屏定下来的那批值；异步 catch 那条改的正是字号分支上的代码。
+
+> 这一段**不写各支的 commit 号**：那是个每提交一次就会过期的字段，
+> 而它过期时不会有任何症状 —— 只有 `main` 的那个（`d509624`）写死，
+> 因为它是"合并到哪儿了"这个问题的唯一答案，且只在下一次合并时才变。
 
 后端：
 
@@ -38,7 +57,8 @@
   MyBatis-Plus 默认字段更新策略是 `NOT_NULL`，null 字段会被**跳过**而非写进 SQL ——
   每日计划取消勾选时 `completed_time` 正是靠这一点才能清回 null
 - **`createTime` / `updateTime` 一律要带
-  `@TableField(updateStrategy = FieldStrategy.NEVER)`**（五个实体全都要有）。
+  `@TableField(updateStrategy = FieldStrategy.NEVER)`**（凡声明了这两个字段的实体一律要有；
+  八个实体里只有 `News` 没有 `updateTime`，因为那张缓存表没有任何 UPDATE 路径）。
   列定义里写着 `ON UPDATE CURRENT_TIMESTAMP` 看着像"库里自己会维护"，但这条规则
   **只在那一列没被显式赋值时才生效**；而 `updateById(实体)` 会把每个非 null 字段都写进 SET，
   其中就有刚从库里读出来的旧时间戳 —— 于是 MySQL 把你给它的旧值写回去，自动更新轮不上。
@@ -48,6 +68,29 @@
   凡是声明了这两个字段的都必须带这个注解，漏一个就点名报出来
 - 未查到（含"存在但属于别人"）统一返回 **404 而非 403**：403 等于确认该 id 存在，
   而主键连续自增，这就成了存在性探测点
+- 全局异常处理器里**路径找不到、方法不对各有专门的出口**（404 `接口不存在` /
+  405 `该接口不支持这个请求方法`，且 405 带 `Allow` 响应头）。不接住它们，
+  两者都会落到兜底的 500 + 一条 ERROR 堆栈 —— 于是"前端把 URL 拼错了"看起来像后端崩了，
+  排查方向直接反了。加这两个 `@ExceptionHandler` 之前实测过一次：
+  `/api/nope` 与 `GET /api/semester/{id}` 都在 `run.log` 里各留了一条"未预期的异常"
+- **但那条 404 出口未登录时够不着 —— 已实测，别照着 401 去查代码**。
+  未登录打 `/api/nope` 拿到的是 **401 不是 404**：`/api/**` 上的 JWT 拦截器先跑，
+  而不存在的路径会落到**静态资源处理器**（映射在 `/**`）上 —— 那是个正常处理器，
+  于是拦截器照常执行，`NoResourceFoundException` 是它找不到资源时才抛的，
+  全局异常处理器根本没机会介入。
+  **两个出口的抛出时机不同，这才是关键**：
+
+  | 出口 | 抛在哪一步 | 拦截器之前还是之后 | 未登录时的结果 |
+  |---|---|---|---|
+  | 404 `接口不存在` | **处理器执行**阶段 | 之后 | 先被挡成 **401** |
+  | 405 `该接口不支持这个请求方法` | **查找处理器**阶段 | 之前 | 照样 **405** |
+
+  所以"路径不存在返回 404"只对**已登录**的请求成立。这不是要修的行为：
+  404 那条出口本身没坏（登录后打 `/api/nope` 就是 404），
+  而未登录一律 401 正好不向陌生人确认"这个路径存不存在"
+- body 里的 `code` **必须和 HTTP 状态码一致**（见 `ResultCode`）。第一版的
+  `handleMethodNotSupported` 回了 HTTP 405 而 body 里写着 `400`（复用了 `BAD_REQUEST`），
+  违反了本类开头的约定，所以补了 `METHOD_NOT_ALLOWED(405, ...)` 而不是将就
 - **业务意义上的"今天"一律用 `common/util/WorkbenchTime.today()`**，别在模块里各写一个
   `ZoneId.of("Asia/Shanghai")`。各处自己定义时，每个模块单看都对，跨模块却会漂 —— 这种
   不一致极难查，因为没有任何一处是"错"的
@@ -78,9 +121,9 @@
   留着它是防"这层括号是没写进文档的实现细节"。完整说明见 `MemoServiceImpl#page` 的注释
 - 关键词搜索**没有转义 LIKE 通配符**：搜 `%` 会命中自己的全部记录。
   隔离仍然成立（看到的还是自己的），所以当成已知行为记着即可，不算漏洞
-- **`GET /api/dashboard` 一行 SQL 都不写**，四个字段分别调
-  `PlanTaskService#listByDate` / `AnniversaryService#upcoming` /
-  `MemoService#count` / `ExpenseService#sumOf`。
+- **`GET /api/dashboard` 一行 SQL 都不写**，六个字段分别调
+  `PlanTaskService#listByDate` / `CourseService#listOnDate` / `AnniversaryService#upcoming` /
+  `MemoService#count` / `ExpenseService#sumOf` / `NewsService#latestToday`。
   在这一层自己拼 wrapper 就会有第二份"哪些日子算即将到来"的判断 —— 两份都能跑、
   都不会报错，只在某天悄悄给出不同的天数。聚合省的是**前端那几次 HTTP 往返**，
   不是后端的一次查询。往首页加卡片时往 `DashboardVO` 加字段，别让前端再发一个请求
@@ -109,6 +152,63 @@
 - 汇总 SQL 用 `MONTH(expense_date)` 而不是 `DATE_FORMAT(..., '%Y-%m')`：
   年份已由入参定死，SQL 里没必要再拼一次前缀，顺带让这段 wrapper 不含任何字面量
   （引号、`%`），而 MyBatis-Plus 对传进 wrapper 的字符串是做注入检查的
+- **学期的 `startDate` 必须是第 1 周的周一**（`SemesterServiceImpl#requireMonday`）。
+  整张课表按 `startDate + (第 N 周 - 1) * 7 + (星期几 - 1)` 换算每一天的日期，
+  基准若不是周一，整个学期整体偏几天 —— 而它显示出来**仍然是一张看着完全正常的课表**。
+  只报错、**不替用户挪到最近的周一**：日期被悄悄改掉比报错难查得多
+- 跨表的两条"宁可让用户多操作一步"的规则都在 `SemesterServiceImpl`：
+  **有课程时不许删学期**，以及**改小 `totalWeeks` 时若有课的 `endWeek` 落到范围外就拒绝**
+  （提示里点名哪几门课）。第二条接口清单里原本没写，是照着第一条补的 ——
+  不挡的话，排在第 18 周的课既没被删、也不再显示在任何一格上，数据还在库里但从此看不见
+- **`CourseServiceImpl#requireOwnedSemester` 是本模块安全上最要紧的一处**：
+  租户插件管 `wb_course.user_id`，但管不到 `semester_id` 指向谁。少了它，
+  拿着别人的学期 id 就能把自己的课塞进别人的课表（`CourseIsolationTest#createRejectsAnotherUsersSemester` 钉的就是这条）
+- **`CourseServiceImpl#listOnDate` 用 `semesterMapper.selectList(null)` 取全部学期**，
+  再在 Java 里筛出包含今天的那一个 —— SQL 里**一个字都没有**，隔离全靠拦截器。
+  和 `AnniversaryServiceImpl#upcoming` / `MemoServiceImpl#count` 属于同一类
+  "看不见条件"的查询，所以单独有隔离用例
+- **`CourseTime` 是"哪些课算这一周"的唯一后端实现**（`occursOnWeek`），
+  前端 `types/course.ts` 里那份是它的镜像 —— 翻周是纯前端行为，
+  后端只有一个 `listOnDate` 管"今天"。两处判反的表现是"单周的课在第 4 周显示出来"，
+  界面不报错，只是那门课不该在。要改就两边一起改
+- **`wb_news` 是全项目唯一一张不带 `user_id` 的表，而且这是本该如此**：新闻是所有用户
+  共享的一份缓存，不是谁的私有数据（`wb_user` 不带是因为它本身就是用户表）。两张表并列在
+  `MybatisPlusConfig#TABLES_WITHOUT_USER_ID` 里。**于是这个模块的隔离用例方向与其余七个
+  恰好相反** —— 别的模块验"别人的不能漏进来"，它验"两个用户拿到的必须是同一份"
+  （`NewsServiceTest#newsIsSharedAcrossUsers`）。照抄别的模块的用例模板会把这条写反，
+  而写反了照样全绿：新账号看到空列表，在"该隔离"的模块里是正确表现
+- **第三方接口的成败要看 body 里的 `error_code`，不能看 HTTP 状态码。**
+  **已实测过**：拿一个无效 key 打 `v.juhe.cn/toutiao/index`，返回的是
+  **HTTP 200 + `error_code=10001`**，`reason` 里才写着原因的
+  （见 `JuheNewsSourceClient`）。只认状态码的话，一次失败的抓取会被记成"成功 0 条"，
+  真正的失败原因一直在 body 里没人看
+- `result.data` **可能是 null**（接口正常、当天就是没内容）。这要当成空列表，
+  不能当异常 —— "抓取失败"（抛异常、跳过这一轮并记 warn）和"这次没有新闻"
+  （正常，什么都不写）是两件事，混成一件会让空内容的日志一直报错
+- **定时任务线程上没有登录态**：`NewsFetchJob` 跑在 `scheduling-1` 上，
+  而租户插件的 `UserContext.require()` 是抛 401 的 —— 所以后台任务**只能**访问
+  `TABLES_WITHOUT_USER_ID` 里的表。把 `wb_news` 从那个集合里摘掉试过一次：
+  `NewsServiceTest` 12 条里 10 条当场变红，**且红成两种互不相干的样子** ——
+  没设 `UserContext` 的报 `未登录或登录已过期`（栈顶落在 `NewsServiceImpl` 里，
+  看着像认证出了 bug），设了 `UserContext` 的报 `BadSqlGrammar`（没有 `user_id` 列）。
+  两种都不会指向真正的原因
+- **`@EnableScheduling` 放在独立的 `SchedulingConfig` 上，不要放启动类** ——
+  理由与 `@MapperScan` 留在 `MybatisPlusConfig` 完全相同：切片测试沿包向上会把启动类
+  当配置类捡走，而切片不装配调度
+- **未配置 `JUHE_NEWS_KEY` 不影响启动**，只是每轮抓取记一条 DEBUG 然后跳过。
+  这与 `JWT_SECRET` 缺了就启动失败**刻意相反**，看着像前后矛盾，其实各有理由：
+  JWT 密钥没有安全默认值可取（猜得出的密钥等于没有认证），而新闻源没配就是没配，
+  登进去少一张卡片远比服务起不来合适
+- **抓取靠"当天去重"保证幂等**（`NewsServiceImpl#refresh` 的 `existingTitlesOn`）：
+  cron 每小时一次，不去重的话同一条新闻一天写 24 遍，列表上全是重复条目。
+  去重键是 `(fetch_date, title)`，**库里没有唯一键兜底**（`wb_news` 只有
+  `idx_fetch_date` 一个索引），所以这段判重是唯一的一道防线，不要以为数据库会拦。
+  跨天不比对：`fetch_date` 不同本来就是两行
+- **超长的三个字段一律截断而不是丢掉这一条**（`NewsServiceImpl#clip`，宽度抄 `schema.sql`）。
+  MySQL 严格模式下超长会让**整条 INSERT** 失败，为了一条标题长的新闻
+  把同批另外几十条一起丢掉是最不划算的；截掉尾巴的那条至少还点得开
+- `GET /api/news` 是**只读**的：没有刷新接口。聚合数据的免费额度是有限的，
+  一个"立即刷新"按钮就是一个人人可点的放大器；抓取交给后台任务，前端只负责看
 
 测试（`./mvnw test`，需先设 `DB_PASSWORD` 与 `JWT_SECRET`，因为要连真实 MySQL）：
 
@@ -150,12 +250,15 @@
   **已验证过它逮得住**（摘掉 `Memo.updateTime` 上的注解，当场变红并点名报出来）。
   另有一条常驻用例 `scannerFindsEntities`：万一扫描器哪天扫不到东西，
   主用例会因为"没有违规项"而永远绿灯 —— 一条永远绿灯的守卫比没有守卫更糟
-- `DashboardServiceTest` —— 首页聚合的**隔离 + 自洽**。它是全仓库唯一一次返回三张表，
-  两类风险都聚在这里：三份数据是不是都只含自己的（`memoCount` 那条最要紧，
+- `DashboardServiceTest` —— 首页聚合的**隔离 + 自洽**。它是全仓库唯一一次同时返回六张表，
+  两类风险都聚在这里：六份数据是不是都只含自己的（`memoCount` 那条最要紧，
   它底下的 `selectCount(null)` 代码里没有 WHERE）；以及 `total` / `completed` /
   `tasks` 三个数对不对得上、是不是只统计今天。
   **已验证过它逮得住**：把 `wb_memo` 加进 `TABLES_WITHOUT_USER_ID`，
-  本类 6 条里 4 条当场变红（`expected: 2L but was: 85L`）
+  本类当场红掉 4 条（`expected: 2L but was: 85L`）。
+  第六个字段 `latestNews` 是这里**唯一一个不按用户分**的，所以它验的是反面：
+  两个用户的 `latestNews` 必须一致，且与 `newsService.latestToday(5)` 逐条相等 ——
+  往 `wb_news` 里种数据的清理也只能按**标题前缀**删，那个按用户循环清理的写法够不着它
 - `TodayPlanVOTest` —— 纯单元（不连库）。钉的是"`total` / `completed` 必须由
   `tasks` 推导"这个结构，另有一条不变量式的用例扫一大片组合。
   它和 `DashboardServiceTest` 分工不同：那边验接了真实数据库之后三个数还对不对得上
@@ -163,6 +266,43 @@
   生日算错的表现很隐蔽 —— 界面不报错，只是安静地不提醒，所以闰年、当天、跨年这些
   边界逐个钉死，另加两条不变量式的用例扫一大片
 - `JacksonConfigTest` —— 无数据库，验证日期格式与 null 字段不被吞掉
+- `CourseTimeTest` —— 周次与单双周的**纯单元测试**（不连库）。它和 `YearlyRecurrenceTest`
+  是同一类：算错了界面上不会有任何提示，只是那门课安静地不出现在该在的格子里。
+  单双周按**学期第几周**判而不是按日期（`dayOfWeek` 与奇偶无关），
+  另有一条 `parityTable` 把第 1–6 周三种周类型的结果逐周写死，
+  改判法时它会把"哪一周变了"直接列出来
+- `SemesterIsolationTest` —— `wb_semester` 的隔离，外带两条**跨表**规则：
+  **有课程时不许删学期**（并断言提示里的门数，只说"还有课程"用户不知道该删几门）、
+  **改小 `totalWeeks` 时超范围的课会拦住这次修改**（断言里带课程名与它排到的周数）。
+  各配一条"合法时必须放行"的用例 —— 否则"永远拒绝"也能全绿。
+  另有 `deleteIsNotBlockedByAnotherUsersCourses`：别人学期里的课**不能**算在自己头上，
+  否则 A 删自己那个空学期会被 B 的课挡住，提示还说"还有 3 门课"，用户无从下手
+- `CourseIsolationTest` —— `wb_course` 的隔离，本模块特有的用例最多，因为
+  **`semester_id` 是一条租户插件管不到的越权通道**：拿着别人的学期 id 建课 / 把自己的课挪进去，
+  两条都钉了（前者断言"库里一行都不多"）。`listBySemester` / `listOnDate` 两条查询路径也各有一条，
+  后者正是首页 `todayCourses` 底下那个 `selectList(null)`
+- `CourseServiceTest` —— 课程的服务层用例，主线是**入参校验**（星期几 1–7、节次 1–6、
+  开始节次不晚于结束、周次落在学期范围内、周类型只能是 0/1/2）与**写路径的响应形状**
+  （`createReturnMatchesSubsequentRead`：新增返回的对象必须与随后查到的完全一致）。
+  `updateClearsTeacherAndLocation` 钉的是"清空要真的写进库" ——
+  MyBatis-Plus 默认跳过 null 字段，所以 `CourseServiceImpl#apply` 把可空的
+  老师 / 地点 `trimToEmpty` 成**空串**（PUT 是全量替换，留成 null 的话那条 SET 会整条消失，
+  界面上看着已清空、刷新一下旧值又回来了）
+- `NewsServiceTest` —— 新闻的服务层用例，两类主线都是本模块独有的。
+  **读取**：只取今天、按 `publishTime` 倒序、没有时间的排最后（`listByDateFiltersAndOrders`
+  种数据时刻意打乱插入顺序，否则"插入顺序恰好等于查询顺序"会被误判成排序生效）。
+  **抓取**：幂等（连跑两次第二次写 0 条）、同一次抓取内部也去重、来源返回空数据时
+  一条都不写、来源失败时**异常照抛出去**（让 `NewsFetchJob` 去决定跳过）、超长标题被截断。
+  另有两条别的模块给不出的：`newsIsSharedAcrossUsers`（两个用户同一份）与
+  `refreshWorksWithoutLoginContext`（调度线程上无登录态也能跑）。
+  假来源是直接 `new NewsServiceImpl(newsMapper, client)` 塞进去的，
+  不走 Spring 容器 —— 因此不必为测试改生产代码的注入方式。
+  清理**按标题前缀 `[用例]新闻-`**删，不能按日期：库里真的有定时任务在写今天的数据
+- `JuheNewsSourceClientTest` —— 纯单元，不连库也不连网（把第三方响应写成字符串喂进去）。
+  钉的是解析与"什么算失败"：`error_code` 非 0 抛业务异常（提示里带 reason 与 code）、
+  缺 `error_code` 也算失败、非 JSON 响应要把报文前缀带进异常、`result.data` 为 null 返回空列表、
+  时间缺失 / 只有日期 / 解析不了三种都**保留该条**（宁可没有时间，也不要少一条新闻）、
+  无标题的条目丢弃。整个类不碰数据库，因为这一层本来就不该知道库的存在
 
 前端：
 
@@ -194,11 +334,43 @@
 - **金额一律走 `src/utils/money.ts` 的 `money()`**，别各处 `toFixed(2)` 拼字符串 ——
   它带千分位，且首页和消费页都要用。这个模块**故意没有 `add()` / `sum()`**：
   汇总在后端做（见后端一节），前端把列表里的金额加起来就会多出一份可能分叉的口径
+- **字号只有一处来源：`styles/tokens.css` 的六个 `--wb-text-*`**，页面里一律
+  `var(--wb-text-*)`，不要写死 px。调大小是**整阶上移一档**（xs 13 / sm 15 /
+  base 16 / lg 18 / xl 20 / 2xl 24），不是只抬 base —— 全站的引用里 sm 和 xs
+  合起来占七成以上，只抬 base 的后果是"正文大了、紧挨着的说明没大"。
+  **lg 必须跟着 base 走**：base 涨到 16 后 lg 若留在 16，卡片标题就与正文同号
+- **Element Plus 的字号只有一部分读 `--el-font-size-base`**，这是本项目最容易
+  漏的一处。另有一批把字号写在**组件自己的类**上或者干脆是编译时写死的字面 px，
+  一个都不读变量，必须逐个写元素级覆盖（都在 `styles/index.css` 的「字号」那一小节）。
+  三个已实测的坑，都是"改了看不见效果"的典型：
+  - **`.el-select__wrapper` 写死 `font-size:14px`** —— 它就是下拉框里**显示的那个值**。
+    漏掉这一条，改完字号后页面上会留下十几个仍是 14px 的下拉框，而旁边的标签和
+    输入框都长大了。注意 `--el-select-input-font-size` 管的是**下拉箭头图标**，不是它
+  - **`.el-input--large` 写死 14px** —— 登录 / 注册页那两个大输入框，
+    不补会出现"输入框 14px、旁边按钮 16px"
+  - **`.el-dialog__body` 走 `--el-dialog-content-font-size:14px`**（声明在 `.el-dialog` 上）
+
+  **同一个类名在 EP 的 CSS 里往往挂着好几条按上下文生效的规则**
+  （`.el-checkbox__label` 就有 14 / base / 16 / 12 四条，谁赢取决于它在哪个组件里），
+  所以**别读 EP 的 CSS 猜哪个生效**。这条按文件猜错过两次、两个方向各一次
+  （先是把 `--el-select-input-font-size` 当成显示值，改口后又当成它跟着 base 走，
+  两次都不对）。做法是改完在浏览器里量那个元素的实际渲染字号 ——
+  仓库外有 `wb-browser-tools/font-probe.mjs`，它把每个页面的字号聚成直方图，
+  谁没跟着变一眼可见
+- **控件高度没有跟着字号一起抬**（`--el-component-size` 仍是 32px），这是结论不是遗漏：
+  它的消费方只有 `.el-input` / `.el-date-editor` / `.el-input-tag` 三个，而
+  `.el-button` / `.el-select__wrapper` / `.el-checkbox` / `.el-pagination` 各自把
+  32px 写死。只抬这一个变量的后果不是"控件一起变大"，而是**同一行里三种高度**
+  （备忘页搜索行 36+32、消费页筛选行 36+32+32）—— 比"略紧"难看得多，且看着像 bug
 - 图表统一走 `components/EChart.vue`，不要在页面里各写一份 `echarts.init`：
   实例用 `shallowRef`（`ref` 会给 echarts 内部几百个对象套 Proxy）；
   用 `ResizeObserver` 而不是 `window.resize`（侧栏折叠、路由切换也会改变容器宽度）；
   每次 `setOption(option, true)` 走 notMerge（默认合并会让消失的图例留在屏幕上）；
   销毁顺序是 `observer.disconnect()` 先于 `chart.dispose()`
+- **ECharts 既不读 CSS 变量，也不会从 body 继承字号** —— 它的
+  `textStyle.fontSize` 默认写死 12px，不补的话全站只有那两张图的字没跟着变大。
+  `EChart.vue` 因此在 `setOption` 前统一补一个 `textStyle`，值**运行时从
+  `--wb-text-sm` 读出来**，而不是再抄一个常量（全站字号只有一个来源，这里同样成立）
 - **图表容器要给固定 `height`，`min-height` 不行** —— echarts 初始化时量到 0 高度，
   之后不会自己长回来，画出来的是一张高度为 0 的空白。见 `ExpenseView.vue` 的 `.chart-box`
 - echarts 按需引入（`echarts/core` + 各 `echarts/charts`、`components`、`renderers`），
@@ -207,6 +379,116 @@
 - 消费页保存后，**若这一笔落在当前筛选范围之外就重置筛选**并说明原因
   （"已保存；这一笔不在当前筛选范围内，已重置筛选"）。不重置的话，
   补录一笔上个月的账，界面看上去像没保存上 —— 而它其实已经写进库了
+- 课程表用 **CSS Grid**，靠显式 `grid-column` / `grid-row` 定位每一块课。
+  **第 1 列是时段带，7 个星期是第 2..8 列**；表头在第 1 行、节次行从第 2 行起。
+  写选择器或验证脚本时差 1 的表现是"每一列都匹配不上"，而不是"整体偏一列"，
+  很容易误判成布局没生效
+- 课程表保存后，**若这一周不在课程的周次范围内就跳到那门课的第一周**并说明原因
+  （"已保存；这门课从第 3 周开始，已跳到那一周"）。和消费页那条是同一个道理：
+  不跳的话，把一门课改成 3–4 周时正看着第 1 周，界面上什么都不会变，像没保存上
+- 周次与单双周的判断（`occursOnWeek`）在 `types/course.ts` 里是后端 `CourseTime` 的**镜像**。
+  翻周纯在前端做，后端只有一个 `listOnDate` 管"今天"，所以这份镜像省不掉 ——
+  但改判法时必须两边一起改
+- `sectionText` / `weekRangeText` 这类文案函数只有一处实现（`types/course.ts`），
+  课表格子、列表、首页今日课程都调它。各写一遍的话，同一门课在两处会显示成
+  "第 1-2 节" 和 "1-2 节"，没人会当成 bug 报上来
+- **列表页的写操作（`save` / `remove` / `init`）必须自己 `catch`**，哪怕只是 `catch {}`。
+  后端拒绝（400/404）时 axios 抛的是 rejection，不接住就冒成一条 `unhandled rejection`，
+  在浏览器里表现为一条来源不明的 [`pageerror`] —— 真正有用的那句提示已经在
+  `ElMessage` 里给过用户了，这条噪音只会把排查方向带偏
+- **`el-dialog__footer` 是 `text-align: right` 的行内布局**，往按钮上加
+  `margin-right: auto` **不管用**（auto 外边距只对块级/弹性项生效）。
+  要把"删除"单独推到最左边，得先用 `:deep(.el-dialog__footer) { display: flex }` 把它变成 flex。
+  它是 el-dialog 渲染的、不在本组件模板里，scoped 选择器够不到，必须 `:deep()`
+- `/news` 页是**只读**的：没有新建 / 编辑 / 删除，也**没有"立即刷新"按钮**。
+  缺刷新按钮不是漏做 —— 抓取走后台定时任务，而这个接口背后的免费额度有限，
+  一个谁都能点的刷新按钮就是一个人人可点的放大器。页面顶多显示"今日已更新"，
+  想换一批等下一轮抓取
+- 新闻为空时 `/news` 页的空状态**必须说明为什么**（要配 `JUHE_NEWS_KEY`）。
+  只说"今天还没有新闻"的话，用户无从判断是没配、抓取坏了、还是真的没新闻 ——
+  三种情况的处理方式完全不同
+- `timeText()`（`types/news.ts`）只有一处实现，首页卡片与 `/news` 页都调它。
+  和 `UpcomingAnniversaryList` 是同一条规矩：`"2026-09-21 08:30:00"` → `"09-21 08:30"`
+  这种切分各写一遍，迟早一处显示成 9-21、另一处 09-21。
+  它**纯字符串切分、不经过 `Date`** —— 时间戳已经由后端格式化好了，再解析一次
+  只会多出一个可能与后端分叉的时区口径（见上面日期那一节）
+- **首页新闻卡片不显示条数**，只写"今日已更新"。聚合接口只带前 5 条，
+  卡片上写"共 5 条"会与 `/news` 页的真实条数对不上，而这个数字没有任何人会去核。
+  同一份数据在两处给出两个数，比不给数糟得多
+- 新闻一条都没有时，**首页那一整块不出现**（`v-if`），不留一张"暂无新闻"的空卡片；
+  但模块卡片照旧、且**不给数字**（不是"今日 0 条"）。这条与"今日消费的 `0` 要照实
+  显示成 `¥0.00`"看着像互相矛盾，其实判的是不同的问题：消费的 0 是"今天确实还没花钱"，
+  是个有意义的数字；新闻的 0 是"这台机器今天什么都没抓到"，属于后台状态，
+  摆到首页上只会让人以为功能坏了
+- 没有 `url` 的那条渲染成 `<span class="news-title is-plain">`（浅一档、无下划线），
+  **不是空 `href` 的 `<a>`** —— 后者点下去会跳到当前页，看着像点了没反应。
+  有 `url` 的才是链接，且一律 `target="_blank" rel="noopener noreferrer"`
+
+窄屏（≤768px）适配：
+
+- **断点全站只有 `max-width: 768px` 这一个**（另有一处既有的
+  `ExpenseView` 图表单列 `max-width: 900px`）。769–1024px 的内容区还有 500px 以上，
+  各页自己的横向滚动够用。断点一多，每加一个页面都要重新想"它落在哪一档"
+- 窄屏侧边栏**缩成 56px 图标栏，不是抽屉**，所以没有开关状态、遮罩、Esc、锁滚动这一套。
+  桌面端宽度的唯一来源仍是 `--wb-sidebar-width`（268px），窄屏是在
+  `WorkbenchLayout` 的媒体查询里覆写 `.sidebar`，**没有动那个 token**
+- 图标栏里文字被 `display: none` 隐藏 —— 这**同时把它从无障碍树里摘掉**，
+  所以导航项和退出按钮都必须补 `aria-label`，否则读屏软件读到的是 7 个没有名字的链接
+- 退出按钮的图标 `.logout-icon` 默认是 `display: none`，只在窄屏显形。
+  这是为了守住"桌面端零变化"：不加这一条，桌面端会多出一个原本没有的图标
+- **`@media (hover: none)` 判的是输入方式，不是屏幕宽度** ——
+  1440px 宽的触摸屏笔记本同样没有悬停，而手机外接鼠标是有的。
+  四处"平时 `opacity: 0`、悬停才显形"的操作按钮（`PlanView` 的 `.task-actions`、
+  `AnniversaryView` 的 `.item-actions`、`MemoView` 的 `.memo-actions`、
+  `ExpenseView` 的 `.row-actions`）都在这个查询里一律显形。
+  其中消费那一处最急：表格行不是可聚焦元素，`:focus-within` 那半条也指望不上，
+  **触屏下这个"删除"按钮原本既看不见、又找不到任何办法让它显形**
+- 页面外壳 `.wb-page` / `.wb-title` / `.wb-subtitle` / `.wb-page-header`
+  已提到 `styles/index.css`（原先在 7 个视图里各抄一份，光改 padding 就要改 7 个文件）。
+  **类名带 `wb-` 前缀不是洁癖**：Vue 的 `scoped` 会把视图里的 `.page` 编译成
+  `.page[data-v-xxx]`（权重 0,2,0），全局的 `.page`（0,1,0）**压不过它**，
+  只能上 `!important`。**首页的 `.page-header` 是唯一没并进去的一个** ——
+  它是块级、没有左右分栏，套上 `space-between` 的 flex 行会让标题块收缩到内容宽，
+  桌面端看得见
+- **弹窗宽度用一条全局 `.el-dialog { max-width: calc(100vw - 32px) }` 兜底**，
+  不去逐个改那 5 处写死的 `width` 属性（440 / 420 / 480 / 560px，落在 4 个页面）。
+  两层理由：改 5 处是 5 次机会漏一个；
+  而 el-dialog **会 teleport 到 body**，scoped 样式本来就不该管它
+- **换行看的是 flex base size，不是收缩后的宽度** —— 这是窄屏适配里最容易白干的一处。
+  `white-space: nowrap` 的元素，base size 就是那串很长的不换行文本，
+  一个人就超过整行，于是它后面的兄弟必然被挤到下一行，**怎么调 `order` 都没用**。
+  实测踩过两次：`UpcomingAnniversaryList` 的姓名把"就是今天"挤到了第三行，
+  `AnniversaryView` 的姓名把"21 日"独自留在第一行、整条记录摊成五行。
+  修法都是把它的 `flex-basis` 归零（`flex: 1 1 0`），让它不参与"放不放得下"的判断
+- 反过来，**只想让某项换行、其余留在第一行时**，不要去设 `flex-basis: 100%`
+  ——那会让**同类的每一项各占一行**。首页今日课程那一行有两个 `.course-meta`
+  （地点、老师），设了就会变成"节次 / 课名 / 地点 / 老师"四行
+- 首页今日课程那一行另有一步：仅"允许换行"不够，地点和老师加起来往往不到 130px，
+  它们会心安理得留在第一行，被挤扁的还是课名（实测只剩 91px）。
+  给课名一个 `min-width: 50%` 逼 meta 让位（改后 137px）
+- 课程表窄屏靠 `.grid-scroll` 既有的 `overflow-x` 横滑，**时段列用
+  `position: sticky; left: 0` 钉住**，否则翻到周三就不知道是哪一节。
+  sticky 是相对最近的滚动祖先定位的，`left: 0` 就是内容区左边缘，
+  **不必去算侧边栏那 56px**；底色必须有（`.corner, .band, .day-head, .slot, .block`
+  那条统一给的），不然滚过去的课块会从这一列底下透出来
+- 消费的明细表**不压列宽**，交给 el-table 自身的横向滚动（5 列最小 610px）
+- 窄屏验证脚本在仓库外 `C:\Users\43146\wb-browser-tools\mobile-check.mjs`
+  （`node mobile-check.mjs` = 390×844 触摸设备，`--desktop` = 1440×900）。
+  **两条验收指标都反直觉，别照抄常见写法**：
+  - `document.documentElement.scrollWidth <= innerWidth` 在本仓库**恒真** ——
+    `WorkbenchLayout` 的 `.content` 只写了 `overflow-y: auto`，按 CSS 规则
+    `overflow-x` 会因此**计算成 `auto`**，超宽内容是在内容区**内部**滚，
+    页面主体压根不会横向滚动。改为逐元素量：凡 `overflow-x: visible` 且
+    `scrollWidth > clientWidth` 的才算溢出（`overflow-x` 不是 visible 的**故意跳过**
+    —— 带 ellipsis 的标题正是靠裁剪，算进来会满屏假阳性）
+  - `page.screenshot({ fullPage: true })` **只拍到一屏** —— 同一个原因，
+    body 不滚、滚的是 `.content`，Playwright 以为整页就一屏高。
+    消费的明细表、备忘录的翻页器都在这条线以下，所以每个页面要拍两张（首屏 + 滚到底）
+  - 脚本分 A–F 六段，其中 **F 段专门证明"窄屏规则真的生效了"**：
+    A 段的"无溢出"证明不了这一点 —— 一条 `flex-basis: 100%` 写错位置，
+    结果同样是不溢出，只是该换行的没换行。F 段逐条量"那个元素是不是真的跑到第二行去了"
+  - 桌面端要跑 `--desktop` 确认没有回退，但**B 段（触屏按钮）在桌面端会跳过** ——
+    那里有 hover，`opacity: 0` 是正确行为，跑下去只会得到一条假红
 
 ### 启动前必须设置的环境变量
 
@@ -217,6 +499,25 @@
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | 默认 `localhost` / `3306` / `stfworkbench` |
 
 后端启动失败时先看是不是漏了 `JWT_SECRET`。前端开发时无需设置 —— 请求经 Vite 代理转发。
+
+**可选变量**（不设也能正常启动）：
+
+| 变量 | 说明 |
+|---|---|
+| `JUHE_NEWS_KEY` | 聚合数据（`v.juhe.cn`）的 appkey。**不设则跳过新闻抓取**、`/api/news` 返回空列表 —— 与 `JWT_SECRET` 缺了即启动失败刻意相反，理由见上面新闻那一节 |
+| `JUHE_NEWS_CRON` | 抓取周期，Spring cron 六段式（秒 分 时 日 月 周），默认 `0 7 * * * *`（每小时第 7 分钟）。**刻意避开整点** —— 整点是各家定时任务扎堆的时刻 |
+
+> 验证抓取链路时把 `JUHE_NEWS_CRON` 调成 `*/15 * * * * *` 之类，
+> 然后去看有没有 `scheduling-1` 线程上的日志。**别对着默认的每小时去等**，
+> 也别指望"没报错就是没跑" —— 未配 appkey 时那是一条 DEBUG，默认级别下根本看不见。
+
+> **改完后端要重启，别对着旧进程验证。** 现象是"新写的接口一律 500 / 404，
+> 日志里每条都落在兜底分支"，很容易误判成新代码写错了。
+> 这个坑踩过一次：`/api/semester` 明明刚写完，却一路报 500，
+> 查了半天才发现那个 JVM 是**课程模块之前**启动的，`GET /api/dashboard`
+> 连 `todayCourses` 这个 key 都没有。前端跑的浏览器脚本更是分不清
+> "后端没重启"和"后端有 bug"——它只会把差异报成界面问题。
+> 排查顺序固定为：先重启后端，再看日志，最后才怀疑代码。
 
 ## 常用命令
 
